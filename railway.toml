@@ -1,5 +1,3 @@
-[deploy]
-startCommand = "node index.js"
-
 [cron]
 schedule = "*/15 * * * *"
+command = "node index.js"
