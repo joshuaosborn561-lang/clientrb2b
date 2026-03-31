@@ -1,0 +1,13 @@
+{
+  "name": "rb2b-slack-lead-router",
+  "version": "1.0.0",
+  "description": "Polls Slack for RB2B visitor alerts, enriches via Apollo, routes to HeyReach and SmartLead",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
