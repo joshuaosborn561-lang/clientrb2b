@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const logger = require('./logger');
 const { parseRB2BMessage } = require('./parser');
 const { enrichWithApollo } = require('./enrichment');
@@ -8,184 +6,124 @@ const { addToSmartLead } = require('./smartlead');
 
 const SLACK_TOKEN = process.env.SLACK_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
-const STATE_FILE = path.join(__dirname, 'state.json');
+
+// How far back to look on each run (20 min covers the 15 min interval with buffer)
+const LOOKBACK_SECONDS = 20 * 60;
 
 // --- ICP filtering ---
-
 const EXCLUDED_EMPLOYEE_RANGES = ['1-10', '11-50'];
-
 const EXCLUDED_INDUSTRIES = [
-  'food', 'restaurant', 'restaurants', 'dining', 'bakery', 'catering',
-  'retail', 'grocery', 'apparel', 'fashion',
-  'healthcare', 'hospital', 'medical', 'nursing', 'dental',
-  'farming', 'agriculture',
-];
+    'food', 'restaurant', 'restaurants', 'dining', 'bakery', 'catering',
+    'retail', 'grocery', 'apparel', 'fashion',
+    'healthcare', 'hospital', 'medical', 'nursing', 'dental',
+    'farming', 'agriculture',
+  ];
 
 function passesICP(lead) {
-  // Employee size check
-  if (EXCLUDED_EMPLOYEE_RANGES.includes(lead.employees)) {
-    return { pass: false, reason: `Employee range too small: ${lead.employees}` };
-  }
-
-  // Industry check — permissive, only skip clearly irrelevant
-  if (lead.industry) {
-    const lower = lead.industry.toLowerCase();
-    for (const keyword of EXCLUDED_INDUSTRIES) {
-      if (lower.includes(keyword)) {
-        return { pass: false, reason: `Excluded industry: ${lead.industry}` };
-      }
+    if (EXCLUDED_EMPLOYEE_RANGES.includes(lead.employees)) {
+          return { pass: false, reason: `Employee range too small: ${lead.employees}` };
     }
-  }
-
-  return { pass: true, reason: null };
-}
-
-// --- State persistence ---
-
-function loadLastCheckedTs() {
-  try {
-    if (fs.existsSync(STATE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      if (data.lastCheckedTs) return data.lastCheckedTs;
+    if (lead.industry) {
+          const lower = lead.industry.toLowerCase();
+          for (const keyword of EXCLUDED_INDUSTRIES) {
+                  if (lower.includes(keyword)) {
+                            return { pass: false, reason: `Excluded industry: ${lead.industry}` };
+                  }
+          }
     }
-  } catch (err) {
-    logger.warn('Failed to read state file, using default', { error: err.message });
-  }
-  // Default: 24 hours ago
-  return String(Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000));
-}
-
-function saveLastCheckedTs(ts) {
-  try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ lastCheckedTs: ts }), 'utf8');
-  } catch (err) {
-    logger.error('Failed to save state file', { error: err.message });
-  }
+    return { pass: true, reason: null };
 }
 
 // --- Slack polling ---
-
 async function fetchSlackMessages(oldest) {
-  if (!SLACK_TOKEN || !CHANNEL_ID) {
-    throw new Error('SLACK_TOKEN and CHANNEL_ID are required');
-  }
-
-  const params = new URLSearchParams({
-    channel: CHANNEL_ID,
-    oldest,
-    limit: '50',
-  });
-
-  const res = await fetch(`https://slack.com/api/conversations.history?${params}`, {
-    headers: { Authorization: `Bearer ${SLACK_TOKEN}` },
-  });
-
-  if (!res.ok) {
-    throw new Error(`Slack HTTP error: ${res.status}`);
-  }
-
-  const data = await res.json();
-
-  if (!data.ok) {
-    throw new Error(`Slack API error: ${data.error}`);
-  }
-
-  return data.messages || [];
+    if (!SLACK_TOKEN || !CHANNEL_ID) {
+          throw new Error('SLACK_TOKEN and CHANNEL_ID env vars are required');
+    }
+    const params = new URLSearchParams({ channel: CHANNEL_ID, oldest, limit: '50' });
+    const res = await fetch(`https://slack.com/api/conversations.history?${params}`, {
+          headers: { Authorization: `Bearer ${SLACK_TOKEN}` },
+    });
+    if (!res.ok) throw new Error(`Slack HTTP error: ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(`Slack API error: ${data.error}`);
+    return data.messages || [];
 }
 
-// --- Main orchestration ---
-
+// --- Main ---
 async function main() {
-  logger.info('RB2B lead router starting');
+    logger.info('RB2B lead router starting');
 
-  const oldest = loadLastCheckedTs();
-  logger.info('Polling Slack', { oldest, channel: CHANNEL_ID });
+  // Stateless lookback: always check the last LOOKBACK_SECONDS seconds.
+  // This is safe for ephemeral cron containers — no file state needed.
+  const oldest = String(Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS);
+    logger.info('Polling Slack', { oldest, channel: CHANNEL_ID, lookbackMinutes: LOOKBACK_SECONDS / 60 });
 
   let messages;
-  try {
-    messages = await fetchSlackMessages(oldest);
-  } catch (err) {
-    logger.error('Failed to fetch Slack messages', { error: err.message });
-    process.exit(1);
-  }
+    try {
+          messages = await fetchSlackMessages(oldest);
+    } catch (err) {
+          logger.error('Failed to fetch Slack messages', { error: err.message });
+          process.exit(1);
+    }
 
   if (messages.length === 0) {
-    logger.info('No new messages found');
-    return;
+        logger.info('No new messages found');
+        return;
   }
 
   logger.info(`Found ${messages.length} messages to process`);
 
   let leadsFound = 0;
-  let routedHeyReach = 0;
-  let routedSmartLead = 0;
-  let skipped = 0;
-  let latestTs = oldest;
+    let routedHeyReach = 0;
+    let routedSmartLead = 0;
+    let skipped = 0;
 
   for (const msg of messages) {
-    // Track the latest timestamp for state persistence
-    if (msg.ts && msg.ts > latestTs) {
-      latestTs = msg.ts;
-    }
+        const lead = parseRB2BMessage(msg.text);
+        if (!lead) continue;
 
-    const lead = parseRB2BMessage(msg.text);
-    if (!lead) continue; // Not an RB2B message
+      leadsFound++;
+        const leadName = `${lead.firstName} ${lead.lastName}`;
 
-    leadsFound++;
-    const leadName = `${lead.firstName} ${lead.lastName}`;
+      const icpResult = passesICP(lead);
+        if (!icpResult.pass) {
+                logger.info('Lead skipped (ICP filter)', { lead: leadName, reason: icpResult.reason });
+                skipped++;
+                continue;
+        }
 
-    // ICP filter
-    const icpResult = passesICP(lead);
-    if (!icpResult.pass) {
-      logger.info('Lead skipped (ICP filter)', { lead: leadName, reason: icpResult.reason });
-      skipped++;
-      continue;
-    }
+      let email = null;
+        try {
+                email = await enrichWithApollo(lead);
+        } catch (err) {
+                logger.error('Unexpected enrichment error', { error: err.message, lead: leadName });
+        }
 
-    // Enrich via Apollo
-    let email = null;
-    try {
-      email = await enrichWithApollo(lead);
-    } catch (err) {
-      logger.error('Unexpected enrichment error', { error: err.message, lead: leadName });
-    }
-
-    // Route to HeyReach (LinkedIn)
-    if (lead.linkedinUrl) {
-      try {
-        const added = await addToHeyReach(lead);
-        if (added) routedHeyReach++;
-      } catch (err) {
-        logger.error('Unexpected HeyReach error', { error: err.message, lead: leadName });
+      if (lead.linkedinUrl) {
+              try {
+                        const added = await addToHeyReach(lead);
+                        if (added) routedHeyReach++;
+              } catch (err) {
+                        logger.error('Unexpected HeyReach error', { error: err.message, lead: leadName });
+              }
+      } else {
+              logger.warn('No LinkedIn URL, skipping HeyReach', { lead: leadName });
       }
-    } else {
-      logger.warn('No LinkedIn URL, skipping HeyReach', { lead: leadName });
-    }
 
-    // Route to SmartLead (email)
-    if (email) {
-      try {
-        const added = await addToSmartLead(lead, email);
-        if (added) routedSmartLead++;
-      } catch (err) {
-        logger.error('Unexpected SmartLead error', { error: err.message, lead: leadName });
+      if (email) {
+              try {
+                        const added = await addToSmartLead(lead, email);
+                        if (added) routedSmartLead++;
+              } catch (err) {
+                        logger.error('Unexpected SmartLead error', { error: err.message, lead: leadName });
+              }
       }
-    }
   }
 
-  // Save state
-  saveLastCheckedTs(latestTs);
-
-  // Summary
-  logger.info('Run complete', {
-    leadsFound,
-    routedHeyReach,
-    routedSmartLead,
-    skipped,
-  });
+  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped });
 }
 
 main().catch((err) => {
-  logger.error('Fatal error', { error: err.message });
-  process.exit(1);
+    logger.error('Fatal error', { error: err.message });
+    process.exit(1);
 });
