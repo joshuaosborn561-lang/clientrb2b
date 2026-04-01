@@ -1,2 +1,2 @@
 [deploy]
-startCommand = "node diagnose.js"
+startCommand = "node backfill.js"

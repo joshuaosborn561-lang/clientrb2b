@@ -21,17 +21,45 @@ const EXCLUDED_INDUSTRIES = [
 
 function passesICP(lead) {
   if (EXCLUDED_EMPLOYEE_RANGES.includes(lead.employees)) {
-    return { pass: false, reason: `Employee range too small: ${lead.employees}` };
+    return { pass: false, reason: 'Employee range too small: ' + lead.employees };
   }
   if (lead.industry) {
     const lower = lead.industry.toLowerCase();
     for (const keyword of EXCLUDED_INDUSTRIES) {
       if (lower.includes(keyword)) {
-        return { pass: false, reason: `Excluded industry: ${lead.industry}` };
+        return { pass: false, reason: 'Excluded industry: ' + lead.industry };
       }
     }
   }
   return { pass: true, reason: null };
+}
+
+// --- Extract lead from message (text, attachments, blocks) ---
+function extractLead(msg) {
+  let lead = parseRB2BMessage(msg.text);
+  if (lead) return lead;
+
+  if (msg.attachments && msg.attachments.length > 0) {
+    for (const att of msg.attachments) {
+      const t = att.text || att.fallback || '';
+      if (t) {
+        lead = parseRB2BMessage(t);
+        if (lead) return lead;
+      }
+    }
+  }
+
+  if (msg.blocks && msg.blocks.length > 0) {
+    for (const block of msg.blocks) {
+      const bt = block.text ? block.text.text : '';
+      if (bt) {
+        lead = parseRB2BMessage(bt);
+        if (lead) return lead;
+      }
+    }
+  }
+
+  return null;
 }
 
 // --- Slack polling ---
@@ -40,12 +68,12 @@ async function fetchSlackMessages(oldest) {
     throw new Error('SLACK_TOKEN and CHANNEL_ID env vars are required');
   }
   const params = new URLSearchParams({ channel: CHANNEL_ID, oldest, limit: '50' });
-  const res = await fetch(`https://slack.com/api/conversations.history?${params}`, {
-    headers: { Authorization: `Bearer ${SLACK_TOKEN}` },
+  const res = await fetch('https://slack.com/api/conversations.history?' + params, {
+    headers: { Authorization: 'Bearer ' + SLACK_TOKEN },
   });
-  if (!res.ok) throw new Error(`Slack HTTP error: ${res.status}`);
+  if (!res.ok) throw new Error('Slack HTTP error: ' + res.status);
   const data = await res.json();
-  if (!data.ok) throw new Error(`Slack API error: ${data.error}`);
+  if (!data.ok) throw new Error('Slack API error: ' + data.error);
   return data.messages || [];
 }
 
@@ -69,7 +97,7 @@ async function main() {
     return;
   }
 
-  logger.info(`Found ${messages.length} messages to process`);
+  logger.info('Found ' + messages.length + ' messages to process');
 
   let leadsFound = 0;
   let routedHeyReach = 0;
@@ -78,50 +106,14 @@ async function main() {
   let parseFailures = 0;
 
   for (const msg of messages) {
-    // Debug: log raw message text so we can see what Slack is sending
-    logger.info('Processing message', {
-      ts: msg.ts,
-      hasText: !!msg.text,
-      textLength: msg.text ? msg.text.length : 0,
-      preview: msg.text ? msg.text.substring(0, 200) : '(no text)',
-      hasAttachments: !!(msg.attachments && msg.attachments.length),
-      hasBlocks: !!(msg.blocks && msg.blocks.length),
-    });
-
-    // Try parsing from msg.text first
-    let lead = parseRB2BMessage(msg.text);
-
-    // If text parsing failed, try attachments (RB2B may send as attachment)
-    if (!lead && msg.attachments && msg.attachments.length > 0) {
-      for (const att of msg.attachments) {
-        const attText = att.text || att.fallback || att.pretext || '';
-        if (attText) {
-          logger.info('Trying attachment text', { preview: attText.substring(0, 200) });
-          lead = parseRB2BMessage(attText);
-          if (lead) break;
-        }
-      }
-    }
-
-    // Also try blocks
-    if (!lead && msg.blocks && msg.blocks.length > 0) {
-      for (const block of msg.blocks) {
-        const blockText = block.text?.text || '';
-        if (blockText) {
-          logger.info('Trying block text', { preview: blockText.substring(0, 200) });
-          lead = parseRB2BMessage(blockText);
-          if (lead) break;
-        }
-      }
-    }
-
+    const lead = extractLead(msg);
     if (!lead) {
       parseFailures++;
       continue;
     }
 
     leadsFound++;
-    const leadName = `${lead.firstName} ${lead.lastName}`;
+    const leadName = lead.firstName + ' ' + lead.lastName;
 
     // ICP filter
     const icpResult = passesICP(lead);
@@ -131,12 +123,16 @@ async function main() {
       continue;
     }
 
-    // Enrich via Apollo
-    let email = null;
-    try {
-      email = await enrichWithApollo(lead);
-    } catch (err) {
-      logger.error('Unexpected enrichment error', { error: err.message, lead: leadName });
+    // Use email from message first, fall back to Apollo enrichment
+    let email = lead.email || null;
+    if (!email) {
+      try {
+        email = await enrichWithApollo(lead);
+      } catch (err) {
+        logger.error('Enrichment error', { error: err.message, lead: leadName });
+      }
+    } else {
+      logger.info('Using email from RB2B message', { lead: leadName, email });
     }
 
     // Route to HeyReach (LinkedIn)
@@ -145,7 +141,7 @@ async function main() {
         const added = await addToHeyReach(lead);
         if (added) routedHeyReach++;
       } catch (err) {
-        logger.error('Unexpected HeyReach error', { error: err.message, lead: leadName });
+        logger.error('HeyReach error', { error: err.message, lead: leadName });
       }
     } else {
       logger.warn('No LinkedIn URL, skipping HeyReach', { lead: leadName });
@@ -157,17 +153,17 @@ async function main() {
         const added = await addToSmartLead(lead, email);
         if (added) routedSmartLead++;
       } catch (err) {
-        logger.error('Unexpected SmartLead error', { error: err.message, lead: leadName });
+        logger.error('SmartLead error', { error: err.message, lead: leadName });
       }
     } else {
-      logger.warn('No email from Apollo, skipping SmartLead', { lead: leadName });
+      logger.warn('No email available, skipping SmartLead', { lead: leadName });
     }
   }
 
   logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures });
 }
 
-main().catch((err) => {
+main().catch(function(err) {
   logger.error('Fatal error', { error: err.message });
   process.exit(1);
 });

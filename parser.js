@@ -1,122 +1,129 @@
 const logger = require('./logger');
 
 /**
- * Strips Slack mrkdwn formatting from raw message text:
- * - <https://url|label> → https://url
- * - <https://url> → https://url
- * - <mailto:email|label> → email
- * - *bold* → bold
- * - _italic_ → italic
- * - ~strikethrough~ → strikethrough
+ * Strips Slack formatting from raw message text:
+ * - <url|label> -> url
+ * - <url> -> url
+ * - <mailto:email|label> -> email
+ * - *bold* -> bold
  */
 function stripSlackFormatting(text) {
   return text
-    // <url|label> → url
     .replace(/<(https?:\/\/[^|>]+)\|[^>]+>/g, '$1')
-    // <url> → url
     .replace(/<(https?:\/\/[^>]+)>/g, '$1')
-    // <mailto:email|label> → email
     .replace(/<mailto:([^|>]+)\|[^>]+>/g, '$1')
-    // <mailto:email> → email
-    .replace(/<mailto:([^>]+)>/g, '$1')
-    // *bold* → bold
-    .replace(/\*([^*]+)\*/g, '$1')
-    // _italic_ → italic (but not mid-word underscores)
-    .replace(/(?:^|\s)_([^_]+)_(?:\s|$)/g, ' $1 ')
-    // ~strike~ → strike
-    .replace(/~([^~]+)~/g, '$1');
+    .replace(/<mailto:([^>]+)>/g, '$1');
 }
 
 /**
  * Parses an RB2B Slack message into a structured lead object.
- * Handles both single-line and multi-line field layouts.
+ *
+ * Actual RB2B format in Slack uses *Bold*: value fields:
+ *   *Name*: Chuck Black
+ *   *Title*: Financial Planner
+ *   *Company*: World Financial Group
+ *   *Email*: someone@example.com
+ *   *LinkedIn*: https://linkedin.com/in/...
+ *   *Location*: Houston, TX
  */
 function parseRB2BMessage(text) {
   if (!text) return null;
 
   try {
-    // Strip Slack formatting first
     const cleaned = stripSlackFormatting(text);
-    const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // Look for the detail line(s) — may be one line or spread across multiple
-    // Try single-line first: "Name: ... Title: ... Company: ..."
-    let detailLine = lines.find(l => l.startsWith('Name:') || l.includes('Name:'));
-    if (!detailLine) {
-      logger.warn('No Name: field found in message, skipping', {
-        preview: cleaned.substring(0, 300),
-      });
+    // Must contain *Name*: to be an RB2B message
+    if (!cleaned.includes('*Name*:') && !cleaned.includes('Name:')) {
       return null;
     }
 
-    // If the detail line doesn't contain Title:, the fields may be on separate lines.
-    // Merge consecutive lines that contain our field markers into one string.
-    if (!detailLine.includes('Title:')) {
-      const fieldMarkers = ['Name:', 'Title:', 'Company:', 'LinkedIn:', 'Location:'];
-      const fieldLines = lines.filter(l => fieldMarkers.some(m => l.includes(m)));
-      detailLine = fieldLines.join(' ');
+    // Extract fields using *Field*: value pattern (primary)
+    // Also fall back to Field: value (without bold)
+    function extractField(fieldName) {
+      // Try *Field*: value first (bold format)
+      const boldRegex = new RegExp('\\*' + fieldName + '\\*:\\s*(.+?)(?=\\s*\\*[A-Z]|\\s*$)', 'm');
+      const boldMatch = cleaned.match(boldRegex);
+      if (boldMatch) return boldMatch[1].trim();
+
+      // Fallback: Field: value (plain format)
+      const plainRegex = new RegExp(fieldName + ':\\s*(.+?)(?=\\s+[A-Z][a-z]+:|\\s*$)', 'm');
+      const plainMatch = cleaned.match(plainRegex);
+      if (plainMatch) return plainMatch[1].trim();
+
+      return '';
     }
 
-    const nameMatch = detailLine.match(/Name:\s*(.+?)(?:\s+Title:|$)/);
-    const titleMatch = detailLine.match(/Title:\s*(.+?)(?:\s+Company:|$)/);
+    // Extract each field line by line for more reliable parsing
+    const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // Company might end at LinkedIn:, Location:, or end of string
-    const companyMatch = detailLine.match(/Company:\s*(.+?)(?:\s+LinkedIn:|\s+Location:|$)/);
-    const linkedinMatch = detailLine.match(/LinkedIn:\s*(https?:\/\/[^\s]+)/);
-    const locationMatch = detailLine.match(/Location:\s*(.+?)(?:\s+LinkedIn:|$)/);
+    function extractFromLines(fieldName) {
+      for (const line of lines) {
+        // Match *Field*: value
+        const boldPattern = new RegExp('^\\*' + fieldName + '\\*:\\s*(.+)$', 'i');
+        const boldMatch = line.match(boldPattern);
+        if (boldMatch) return boldMatch[1].trim();
 
-    // Also try Location after LinkedIn
-    const locationAfterLinkedin = detailLine.match(/LinkedIn:\s*https?:\/\/[^\s]+\s+Location:\s*(.+)$/);
+        // Match Field: value (at start of line)
+        const plainPattern = new RegExp('^' + fieldName + ':\\s*(.+)$', 'i');
+        const plainMatch = line.match(plainPattern);
+        if (plainMatch) return plainMatch[1].trim();
+      }
+      return '';
+    }
 
-    const fullName = nameMatch ? nameMatch[1].trim() : '';
+    const fullName = extractFromLines('Name');
     const nameParts = fullName.split(/\s+/);
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
 
     if (!firstName) {
-      logger.warn('Could not extract name from message', {
-        detailLine: detailLine.substring(0, 200),
+      logger.warn('Could not extract name from RB2B message', {
+        preview: cleaned.substring(0, 200),
       });
       return null;
     }
 
-    // --- Visit line ---
-    const visitLine = lines.find(l => l.includes('First identified visiting') || l.includes('identified visiting'));
-    let visitedUrl = '';
-    let visitedAt = '';
-    if (visitLine) {
-      const urlMatch = visitLine.match(/visiting\s+(https?:\/\/[^\s]+)\s+on\s+(.+)$/);
-      if (urlMatch) {
-        visitedUrl = urlMatch[1];
-        visitedAt = urlMatch[2];
-      }
-    }
+    const email = extractFromLines('Email');
+    const linkedinUrl = extractFromLines('LinkedIn');
+    let location = extractFromLines('Location');
 
-    // --- Company details (may be on separate lines) ---
-    const findField = (prefix) => {
-      const line = lines.find(l => l.startsWith(prefix));
-      return line ? line.replace(prefix, '').trim() : '';
-    };
+    // Clean location — RB2B sometimes appends extra block content after it
+    // Cut at common suffixes like "profile", "has visited", "Connect"
+    const locationCutoff = location.match(/^([^]*?)(?:\s+profile\b|\s+has visited\b|\s+Connect\b|\s+button\b|\s+:)/i);
+    if (locationCutoff) {
+      location = locationCutoff[1].trim();
+    }
 
     const lead = {
       firstName,
       lastName,
-      title: titleMatch ? titleMatch[1].trim() : '',
-      company: companyMatch ? companyMatch[1].trim() : '',
-      linkedinUrl: linkedinMatch ? linkedinMatch[1].trim() : '',
-      location: locationAfterLinkedin ? locationAfterLinkedin[1].trim()
-                : locationMatch ? locationMatch[1].trim() : '',
-      companyWebsite: findField('Website:'),
-      employees: findField('Est. Employees:'),
-      industry: findField('Industry:'),
-      revenue: findField('Est. Revenue:'),
-      visitedUrl,
-      visitedAt,
+      title: extractFromLines('Title'),
+      company: extractFromLines('Company'),
+      email: email,
+      linkedinUrl: linkedinUrl,
+      location: location,
+      companyWebsite: extractFromLines('Website'),
+      employees: extractFromLines('Est. Employees') || extractFromLines('Employees'),
+      industry: extractFromLines('Industry'),
+      revenue: extractFromLines('Est. Revenue') || extractFromLines('Revenue'),
+      visitedUrl: '',
+      visitedAt: '',
     };
 
+    // Try to extract visit info
+    const visitLine = lines.find(l => l.includes('identified visiting') || l.includes('visited'));
+    if (visitLine) {
+      const urlMatch = visitLine.match(/visiting\s+(https?:\/\/[^\s]+)\s+on\s+(.+)$/);
+      if (urlMatch) {
+        lead.visitedUrl = urlMatch[1];
+        lead.visitedAt = urlMatch[2];
+      }
+    }
+
     logger.info('Parsed lead', {
-      name: `${firstName} ${lastName}`,
+      name: firstName + ' ' + lastName,
       company: lead.company,
+      hasEmail: !!lead.email,
       hasLinkedIn: !!lead.linkedinUrl,
       employees: lead.employees,
       industry: lead.industry,
