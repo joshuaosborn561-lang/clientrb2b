@@ -1,41 +1,87 @@
 const logger = require('./logger');
 
 /**
+ * Strips Slack mrkdwn formatting from raw message text:
+ * - <https://url|label> → https://url
+ * - <https://url> → https://url
+ * - <mailto:email|label> → email
+ * - *bold* → bold
+ * - _italic_ → italic
+ * - ~strikethrough~ → strikethrough
+ */
+function stripSlackFormatting(text) {
+  return text
+    // <url|label> → url
+    .replace(/<(https?:\/\/[^|>]+)\|[^>]+>/g, '$1')
+    // <url> → url
+    .replace(/<(https?:\/\/[^>]+)>/g, '$1')
+    // <mailto:email|label> → email
+    .replace(/<mailto:([^|>]+)\|[^>]+>/g, '$1')
+    // <mailto:email> → email
+    .replace(/<mailto:([^>]+)>/g, '$1')
+    // *bold* → bold
+    .replace(/\*([^*]+)\*/g, '$1')
+    // _italic_ → italic (but not mid-word underscores)
+    .replace(/(?:^|\s)_([^_]+)_(?:\s|$)/g, ' $1 ')
+    // ~strike~ → strike
+    .replace(/~([^~]+)~/g, '$1');
+}
+
+/**
  * Parses an RB2B Slack message into a structured lead object.
- *
- * Expected format:
- *   Jennifer Pfeister  from Rocket Arena
- *   Name: Jennifer Pfeister Title: Vice President ... Company: Rocket Arena LinkedIn: https://...
- *   First identified visiting https://... on March 31, 2026 at 10:47AM EDT
- *   About Rocket Arena
- *   Website: https://...
- *   Est. Employees: 51-200
- *   Industry: Creative Arts And Entertainment
- *   Est. Revenue: $10M - $20M
+ * Handles both single-line and multi-line field layouts.
  */
 function parseRB2BMessage(text) {
   if (!text) return null;
 
   try {
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    // Strip Slack formatting first
+    const cleaned = stripSlackFormatting(text);
+    const lines = cleaned.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // --- Person details line (Name: ... Title: ... Company: ... LinkedIn: ... Location: ...) ---
-    const detailLine = lines.find(l => l.startsWith('Name:'));
-    if (!detailLine) return null;
+    // Look for the detail line(s) — may be one line or spread across multiple
+    // Try single-line first: "Name: ... Title: ... Company: ..."
+    let detailLine = lines.find(l => l.startsWith('Name:') || l.includes('Name:'));
+    if (!detailLine) {
+      logger.warn('No Name: field found in message, skipping', {
+        preview: cleaned.substring(0, 300),
+      });
+      return null;
+    }
 
-    const nameMatch = detailLine.match(/Name:\s*(.+?)\s+Title:/);
-    const titleMatch = detailLine.match(/Title:\s*(.+?)\s+Company:/);
-    const companyMatch = detailLine.match(/Company:\s*(.+?)\s+LinkedIn:/);
+    // If the detail line doesn't contain Title:, the fields may be on separate lines.
+    // Merge consecutive lines that contain our field markers into one string.
+    if (!detailLine.includes('Title:')) {
+      const fieldMarkers = ['Name:', 'Title:', 'Company:', 'LinkedIn:', 'Location:'];
+      const fieldLines = lines.filter(l => fieldMarkers.some(m => l.includes(m)));
+      detailLine = fieldLines.join(' ');
+    }
+
+    const nameMatch = detailLine.match(/Name:\s*(.+?)(?:\s+Title:|$)/);
+    const titleMatch = detailLine.match(/Title:\s*(.+?)(?:\s+Company:|$)/);
+
+    // Company might end at LinkedIn:, Location:, or end of string
+    const companyMatch = detailLine.match(/Company:\s*(.+?)(?:\s+LinkedIn:|\s+Location:|$)/);
     const linkedinMatch = detailLine.match(/LinkedIn:\s*(https?:\/\/[^\s]+)/);
-    const locationMatch = detailLine.match(/Location:\s*(.+)$/);
+    const locationMatch = detailLine.match(/Location:\s*(.+?)(?:\s+LinkedIn:|$)/);
+
+    // Also try Location after LinkedIn
+    const locationAfterLinkedin = detailLine.match(/LinkedIn:\s*https?:\/\/[^\s]+\s+Location:\s*(.+)$/);
 
     const fullName = nameMatch ? nameMatch[1].trim() : '';
     const nameParts = fullName.split(/\s+/);
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
 
+    if (!firstName) {
+      logger.warn('Could not extract name from message', {
+        detailLine: detailLine.substring(0, 200),
+      });
+      return null;
+    }
+
     // --- Visit line ---
-    const visitLine = lines.find(l => l.startsWith('First identified visiting'));
+    const visitLine = lines.find(l => l.includes('First identified visiting') || l.includes('identified visiting'));
     let visitedUrl = '';
     let visitedAt = '';
     if (visitLine) {
@@ -46,30 +92,42 @@ function parseRB2BMessage(text) {
       }
     }
 
-    // --- Company details ---
-    const websiteLine = lines.find(l => l.startsWith('Website:'));
-    const employeesLine = lines.find(l => l.startsWith('Est. Employees:'));
-    const industryLine = lines.find(l => l.startsWith('Industry:'));
-    const revenueLine = lines.find(l => l.startsWith('Est. Revenue:'));
+    // --- Company details (may be on separate lines) ---
+    const findField = (prefix) => {
+      const line = lines.find(l => l.startsWith(prefix));
+      return line ? line.replace(prefix, '').trim() : '';
+    };
 
-    const extract = (line, prefix) => line ? line.replace(prefix, '').trim() : '';
-
-    return {
+    const lead = {
       firstName,
       lastName,
       title: titleMatch ? titleMatch[1].trim() : '',
       company: companyMatch ? companyMatch[1].trim() : '',
       linkedinUrl: linkedinMatch ? linkedinMatch[1].trim() : '',
-      location: locationMatch ? locationMatch[1].trim() : '',
-      companyWebsite: extract(websiteLine, 'Website:'),
-      employees: extract(employeesLine, 'Est. Employees:'),
-      industry: extract(industryLine, 'Industry:'),
-      revenue: extract(revenueLine, 'Est. Revenue:'),
+      location: locationAfterLinkedin ? locationAfterLinkedin[1].trim()
+                : locationMatch ? locationMatch[1].trim() : '',
+      companyWebsite: findField('Website:'),
+      employees: findField('Est. Employees:'),
+      industry: findField('Industry:'),
+      revenue: findField('Est. Revenue:'),
       visitedUrl,
       visitedAt,
     };
+
+    logger.info('Parsed lead', {
+      name: `${firstName} ${lastName}`,
+      company: lead.company,
+      hasLinkedIn: !!lead.linkedinUrl,
+      employees: lead.employees,
+      industry: lead.industry,
+    });
+
+    return lead;
   } catch (err) {
-    logger.error('Failed to parse RB2B message', { error: err.message });
+    logger.error('Failed to parse RB2B message', {
+      error: err.message,
+      preview: text.substring(0, 300),
+    });
     return null;
   }
 }
