@@ -7,8 +7,32 @@ const { addToSmartLead } = require('./smartlead');
 const SLACK_TOKEN = process.env.SLACK_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 
-// How far back to look on each run (20 min covers the 15 min interval with buffer)
-const LOOKBACK_SECONDS = 20 * 60;
+// Look back 2 hours to ensure we never miss a lead due to cron delays or downtime
+const LOOKBACK_SECONDS = 2 * 60 * 60;
+
+// Track leads we've already processed to avoid duplicates
+// SmartLead and HeyReach will also dedupe on their end, but this avoids noisy logs
+const SEEN_FILE = require('path').join(__dirname, 'seen.json');
+const fs = require('fs');
+
+function loadSeen() {
+  try {
+    if (fs.existsSync(SEEN_FILE)) return JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8'));
+  } catch (e) {}
+  return {};
+}
+
+function saveSeen(seen) {
+  try {
+    // Only keep entries from last 24 hours
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const cleaned = {};
+    for (const [k, v] of Object.entries(seen)) {
+      if (v > cutoff) cleaned[k] = v;
+    }
+    fs.writeFileSync(SEEN_FILE, JSON.stringify(cleaned), 'utf8');
+  } catch (e) {}
+}
 
 // --- ICP filtering ---
 const EXCLUDED_EMPLOYEE_RANGES = ['1-10', '11-50'];
@@ -99,16 +123,24 @@ async function main() {
 
   logger.info('Found ' + messages.length + ' messages to process');
 
+  const seen = loadSeen();
   let leadsFound = 0;
   let routedHeyReach = 0;
   let routedSmartLead = 0;
   let skipped = 0;
   let parseFailures = 0;
+  let duplicates = 0;
 
   for (const msg of messages) {
     const lead = extractLead(msg);
     if (!lead) {
       parseFailures++;
+      continue;
+    }
+
+    // Dedupe by message timestamp
+    if (seen[msg.ts]) {
+      duplicates++;
       continue;
     }
 
@@ -120,6 +152,7 @@ async function main() {
     if (!icpResult.pass) {
       logger.info('Lead skipped (ICP filter)', { lead: leadName, reason: icpResult.reason });
       skipped++;
+      seen[msg.ts] = Date.now();
       continue;
     }
 
@@ -158,9 +191,12 @@ async function main() {
     } else {
       logger.warn('No email available, skipping SmartLead', { lead: leadName });
     }
+
+    seen[msg.ts] = Date.now();
   }
 
-  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures });
+  saveSeen(seen);
+  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped, duplicates, parseFailures });
 }
 
 main().catch(function(err) {
