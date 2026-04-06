@@ -1,3 +1,2 @@
-[cron]
-schedule = "*/15 * * * *"
-command = "node index.js"
+[deploy]
+startCommand = "node backfill.js"
