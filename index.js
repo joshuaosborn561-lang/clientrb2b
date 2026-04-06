@@ -7,32 +7,10 @@ const { addToSmartLead } = require('./smartlead');
 const SLACK_TOKEN = process.env.SLACK_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 
-// Look back 2 hours to ensure we never miss a lead due to cron delays or downtime
-const LOOKBACK_SECONDS = 2 * 60 * 60;
-
-// Track leads we've already processed to avoid duplicates
-// SmartLead and HeyReach will also dedupe on their end, but this avoids noisy logs
-const SEEN_FILE = require('path').join(__dirname, 'seen.json');
-const fs = require('fs');
-
-function loadSeen() {
-  try {
-    if (fs.existsSync(SEEN_FILE)) return JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8'));
-  } catch (e) {}
-  return {};
-}
-
-function saveSeen(seen) {
-  try {
-    // Only keep entries from last 24 hours
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const cleaned = {};
-    for (const [k, v] of Object.entries(seen)) {
-      if (v > cutoff) cleaned[k] = v;
-    }
-    fs.writeFileSync(SEEN_FILE, JSON.stringify(cleaned), 'utf8');
-  } catch (e) {}
-}
+// Look back 7 days every run. SmartLead and HeyReach dedupe on their end
+// (by email and LinkedIn URL), so reprocessing old leads is harmless.
+// This guarantees we never miss a lead due to cron delays or downtime.
+const LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 
 // --- ICP filtering ---
 const EXCLUDED_EMPLOYEE_RANGES = ['1-10', '11-50'];
@@ -58,7 +36,6 @@ function passesICP(lead) {
   return { pass: true, reason: null };
 }
 
-// --- Extract lead from message (text, attachments, blocks) ---
 function extractLead(msg) {
   let lead = parseRB2BMessage(msg.text);
   if (lead) return lead;
@@ -86,50 +63,57 @@ function extractLead(msg) {
   return null;
 }
 
-// --- Slack polling ---
-async function fetchSlackMessages(oldest) {
+async function fetchAllSlackMessages(oldest) {
   if (!SLACK_TOKEN || !CHANNEL_ID) {
     throw new Error('SLACK_TOKEN and CHANNEL_ID env vars are required');
   }
-  const params = new URLSearchParams({ channel: CHANNEL_ID, oldest, limit: '50' });
-  const res = await fetch('https://slack.com/api/conversations.history?' + params, {
-    headers: { Authorization: 'Bearer ' + SLACK_TOKEN },
-  });
-  if (!res.ok) throw new Error('Slack HTTP error: ' + res.status);
-  const data = await res.json();
-  if (!data.ok) throw new Error('Slack API error: ' + data.error);
-  return data.messages || [];
+  let allMessages = [];
+  let cursor;
+  while (true) {
+    const params = new URLSearchParams({ channel: CHANNEL_ID, oldest, limit: '200' });
+    if (cursor) params.set('cursor', cursor);
+    const res = await fetch('https://slack.com/api/conversations.history?' + params, {
+      headers: { Authorization: 'Bearer ' + SLACK_TOKEN },
+    });
+    if (!res.ok) throw new Error('Slack HTTP error: ' + res.status);
+    const data = await res.json();
+    if (!data.ok) throw new Error('Slack API error: ' + data.error);
+    allMessages = allMessages.concat(data.messages || []);
+    if (data.has_more && data.response_metadata && data.response_metadata.next_cursor) {
+      cursor = data.response_metadata.next_cursor;
+    } else {
+      break;
+    }
+  }
+  return allMessages;
 }
 
-// --- Main ---
 async function main() {
   logger.info('RB2B lead router starting');
 
   const oldest = String(Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS);
-  logger.info('Polling Slack', { oldest, channel: CHANNEL_ID, lookbackMinutes: LOOKBACK_SECONDS / 60 });
+  logger.info('Polling Slack', { oldest, channel: CHANNEL_ID, lookbackDays: LOOKBACK_SECONDS / 86400 });
 
   let messages;
   try {
-    messages = await fetchSlackMessages(oldest);
+    messages = await fetchAllSlackMessages(oldest);
   } catch (err) {
     logger.error('Failed to fetch Slack messages', { error: err.message });
     process.exit(1);
   }
 
   if (messages.length === 0) {
-    logger.info('No new messages found');
+    logger.info('No messages found');
     return;
   }
 
   logger.info('Found ' + messages.length + ' messages to process');
 
-  const seen = loadSeen();
   let leadsFound = 0;
   let routedHeyReach = 0;
   let routedSmartLead = 0;
   let skipped = 0;
   let parseFailures = 0;
-  let duplicates = 0;
 
   for (const msg of messages) {
     const lead = extractLead(msg);
@@ -138,25 +122,16 @@ async function main() {
       continue;
     }
 
-    // Dedupe by message timestamp
-    if (seen[msg.ts]) {
-      duplicates++;
-      continue;
-    }
-
     leadsFound++;
     const leadName = lead.firstName + ' ' + lead.lastName;
 
-    // ICP filter
     const icpResult = passesICP(lead);
     if (!icpResult.pass) {
       logger.info('Lead skipped (ICP filter)', { lead: leadName, reason: icpResult.reason });
       skipped++;
-      seen[msg.ts] = Date.now();
       continue;
     }
 
-    // Use email from message first, fall back to Apollo enrichment
     let email = lead.email || null;
     if (!email) {
       try {
@@ -164,11 +139,8 @@ async function main() {
       } catch (err) {
         logger.error('Enrichment error', { error: err.message, lead: leadName });
       }
-    } else {
-      logger.info('Using email from RB2B message', { lead: leadName, email });
     }
 
-    // Route to HeyReach (LinkedIn)
     if (lead.linkedinUrl) {
       try {
         const added = await addToHeyReach(lead);
@@ -176,11 +148,8 @@ async function main() {
       } catch (err) {
         logger.error('HeyReach error', { error: err.message, lead: leadName });
       }
-    } else {
-      logger.warn('No LinkedIn URL, skipping HeyReach', { lead: leadName });
     }
 
-    // Route to SmartLead (email)
     if (email) {
       try {
         const added = await addToSmartLead(lead, email);
@@ -188,15 +157,10 @@ async function main() {
       } catch (err) {
         logger.error('SmartLead error', { error: err.message, lead: leadName });
       }
-    } else {
-      logger.warn('No email available, skipping SmartLead', { lead: leadName });
     }
-
-    seen[msg.ts] = Date.now();
   }
 
-  saveSeen(seen);
-  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped, duplicates, parseFailures });
+  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures });
 }
 
 main().catch(function(err) {
