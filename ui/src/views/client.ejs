@@ -1,0 +1,115 @@
+<% layout('layout', { title: client.name }) -%>
+<div class="row" style="justify-content: space-between; align-items: flex-start;">
+  <div>
+    <h2 style="margin-top: 0;">Client: <%= client.name %></h2>
+    <div class="muted">ID: <code><%= client.id %></code></div>
+  </div>
+  <div class="row">
+    <a class="btn" href="/clients/<%= client.id %>/edit">Edit</a>
+    <a class="btn" href="/">Back</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Config</h3>
+  <div class="grid">
+    <div><div class="muted">Slack Channel ID</div><div><code><%= client.slack_channel_id || '' %></code></div></div>
+    <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
+    <div><div class="muted">HeyReach Campaign ID</div><div><code><%= client.heyreach_campaign_id || '' %></code></div></div>
+    <div><div class="muted">SmartLead Campaign ID</div><div><code><%= client.smartlead_campaign_id || '' %></code></div></div>
+    <div><div class="muted">ManyChat Flow Namespace</div><div><code><%= client.manychat_flow_ns || '' %></code></div></div>
+    <div><div class="muted">ManyChat SMS Consent Phrase</div><div><code><%= client.manychat_sms_consent_phrase || '' %></code></div></div>
+  </div>
+
+  <% if (client.notes) { %>
+    <div style="margin-top: 12px;">
+      <div class="muted">Notes</div>
+      <pre style="white-space: pre-wrap; background: #0b1020; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);"><%= client.notes %></pre>
+    </div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between; align-items: center;">
+    <h3 style="margin: 0;">Railway env block (worker-v2)</h3>
+    <button class="btn" type="button" onclick="copyEnv()">Copy</button>
+  </div>
+  <p class="muted" style="margin-top: 8px;">Paste this into the Railway service you deploy from <code>worker-v2/</code>. Do not paste into the legacy worker.</p>
+  <textarea id="envBlock" spellcheck="false" style="width: 100%; min-height: 220px; background: #0b1020; color: #e7ecff; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"><%= envBlock %></textarea>
+</div>
+
+<dialog id="onboardModal" style="max-width: 880px; width: 92vw; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; background: #0b1020; color: #e7ecff; padding: 0;">
+  <div style="padding: 18px 18px 0 18px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+    <div class="row" style="justify-content: space-between; align-items: center;">
+      <h3 style="margin: 0;">Client onboarding guide</h3>
+      <button class="btn" onclick="document.getElementById('onboardModal').close()">Close</button>
+    </div>
+    <p class="muted">This is the exact checklist to onboard a new client into the LeadMagic → ManyChat SMS / SmartLead routing flow.</p>
+  </div>
+  <div style="padding: 18px;">
+    <h4 style="margin-top: 0;">1) RB2B → Slack</h4>
+    <ul>
+      <li>In RB2B, enable Slack notifications for identified visitors/leads.</li>
+      <li>Point RB2B to the client’s Slack workspace/channel for alerts.</li>
+      <li>In Slack, copy the channel ID (looks like <code>C0123ABCDEF</code>) and paste it into this client record.</li>
+    </ul>
+
+    <h4>2) Slack token</h4>
+    <ul>
+      <li>Create or reuse a Slack app/bot that can read the alert channel history.</li>
+      <li>Grant the bot scopes needed for <code>conversations.history</code> (and whatever Slack requires to read that channel).</li>
+      <li>Put the bot token into Railway as <code>SLACK_TOKEN</code> for the worker-v2 service.</li>
+    </ul>
+
+    <h4>3) LeadMagic enrichment</h4>
+    <ul>
+      <li>Create a LeadMagic API key and add it to Railway as <code>LEADMAGIC_API_KEY</code>.</li>
+      <li>Worker-v2 uses:</li>
+      <ul>
+        <li><code>/v1/people/email-finder</code> to find work email when missing.</li>
+        <li><code>/v1/people/mobile-finder</code> to find a mobile number (best with LinkedIn profile URL).</li>
+      </ul>
+    </ul>
+
+    <h4>4) ManyChat (SMS) routing</h4>
+    <ul>
+      <li>Connect the SMS channel in ManyChat for the client’s account.</li>
+      <li>Create an Automation (Flow) that should run when we have a mobile.</li>
+      <li>Copy the Flow’s namespace (ManyChat calls it <code>flow_ns</code>) and paste into <strong>ManyChat Flow Namespace</strong>.</li>
+      <li>Create a ManyChat API token and add it to Railway as <code>MANYCHAT_API_TOKEN</code>.</li>
+      <li>Set <code>MANYCHAT_SMS_CONSENT_PHRASE</code> and confirm opt-in requirements for SMS.</li>
+    </ul>
+
+    <h4>5) SmartLead + HeyReach campaign IDs</h4>
+    <ul>
+      <li>Put the client’s <strong>SmartLead Campaign ID</strong> + <code>SMARTLEAD_API_KEY</code> in Railway.</li>
+      <li>Put the client’s <strong>HeyReach Campaign ID</strong> + <code>HEYREACH_API_KEY</code> in Railway (optional; requires LinkedIn URL).</li>
+    </ul>
+
+    <h4>6) Deploy worker-v2 on Railway</h4>
+    <ul>
+      <li>Deploy a new Railway service using the <code>worker-v2/</code> folder.</li>
+      <li>Set the cron schedule (example every 15 minutes) and command <code>node index.js</code>.</li>
+      <li>Paste the env block from this page into the service variables.</li>
+      <li>Leave the legacy service alone (it stays running for your current client).</li>
+    </ul>
+  </div>
+</dialog>
+
+<div class="row" style="justify-content: flex-end;">
+  <button class="btn primary" type="button" onclick="document.getElementById('onboardModal').showModal()">Open onboarding modal</button>
+</div>
+
+<script>
+  async function copyEnv() {
+    const el = document.getElementById('envBlock');
+    el.select();
+    el.setSelectionRange(0, el.value.length);
+    try {
+      await navigator.clipboard.writeText(el.value);
+    } catch (e) {
+      document.execCommand('copy');
+    }
+  }
+</script>
+

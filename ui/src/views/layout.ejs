@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title><%= title %></title>
+    <style>
+      :root { --bg:#0b1020; --card:#111a33; --text:#e8eeff; --muted:#9bb0ff; --border:#22315f; --accent:#6ea8fe; --danger:#ff6b6b; }
+      * { box-sizing:border-box; }
+      body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background: radial-gradient(1200px 800px at 20% 10%, #15214a 0%, var(--bg) 50%, #070a14 100%); color:var(--text); }
+      a { color: var(--accent); text-decoration: none; }
+      .wrap { max-width: 1100px; margin: 28px auto; padding: 0 16px; }
+      .top { display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom: 18px; }
+      .brand { display:flex; align-items:baseline; gap: 10px; }
+      .brand h1 { margin:0; font-size: 18px; letter-spacing: .2px; }
+      .brand .sub { color: var(--muted); font-size: 13px; }
+      .card { background: color-mix(in srgb, var(--card), transparent 8%); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: 0 18px 60px rgba(0,0,0,.35); }
+      .grid { display:grid; gap: 14px; grid-template-columns: 1fr; }
+      @media (min-width: 920px) { .grid { grid-template-columns: 1.2fr .8fr; } }
+      table { width:100%; border-collapse: collapse; }
+      th, td { padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: top; }
+      th { text-align:left; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+      td { font-size: 14px; }
+      .pill { display:inline-flex; align-items:center; gap:6px; padding: 4px 10px; border-radius: 999px; border:1px solid rgba(255,255,255,.14); font-size:12px; color: var(--text); }
+      .pill.ok { border-color: rgba(110,168,254,.5); background: rgba(110,168,254,.12); }
+      .pill.off { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: var(--muted); }
+      .row { display:flex; gap: 10px; flex-wrap: wrap; align-items:center; justify-content: space-between; }
+      .btn { cursor:pointer; border:1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--text); padding: 9px 12px; border-radius: 10px; font-weight: 600; font-size: 13px; }
+      .btn:hover { border-color: rgba(110,168,254,.5); background: rgba(110,168,254,.12); }
+      .btn.primary { border-color: rgba(110,168,254,.6); background: rgba(110,168,254,.18); }
+      .btn.danger { border-color: rgba(255,107,107,.55); background: rgba(255,107,107,.12); }
+      .muted { color: var(--muted); font-size: 13px; line-height: 1.4; }
+      .k { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #cfe0ff; }
+      .form { display:grid; gap: 10px; }
+      .field label { display:block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+      .field input, .field textarea, .field select { width:100%; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.18); color: var(--text); }
+      .field textarea { min-height: 92px; resize: vertical; }
+      .split { display:grid; gap: 10px; grid-template-columns: 1fr; }
+      @media (min-width: 700px) { .split { grid-template-columns: 1fr 1fr; } }
+      .modalBack { position: fixed; inset: 0; background: rgba(0,0,0,.55); display:none; padding: 16px; }
+      .modalBack.open { display:flex; align-items:center; justify-content:center; }
+      .modal { width: min(920px, 100%); max-height: 90vh; overflow:auto; background: #0b132a; border:1px solid var(--border); border-radius: 16px; box-shadow: 0 30px 120px rgba(0,0,0,.6); }
+      .modalHeader { padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; align-items:center; gap: 10px; }
+      .modalHeader h2 { margin:0; font-size: 14px; letter-spacing: .2px; }
+      .modalBody { padding: 16px; }
+      pre { margin: 0; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.25); overflow:auto; }
+      .small { font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <div class="brand">
+          <h1>Lead Router</h1>
+          <div class="sub">Railway UI · clients + onboarding</div>
+        </div>
+        <div class="row">
+          <a class="btn" href="/health">Health</a>
+          <a class="btn" href="/clients/new">New client</a>
+        </div>
+      </div>
+      <%- body %>
+      <div style="margin-top:16px" class="small">Auth: Basic (set <span class="k">UI_ADMIN_USER</span>/<span class="k">UI_ADMIN_PASS</span>). DB: set <span class="k">DATABASE_URL</span>.</div>
+    </div>
+
+    <div id="modalBack" class="modalBack" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal">
+        <div class="modalHeader">
+          <h2 id="modalTitle">Onboarding</h2>
+          <button class="btn" onclick="closeModal()">Close</button>
+        </div>
+        <div class="modalBody">
+          <div id="modalContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function openModal(title, html) {
+        const back = document.getElementById('modalBack');
+        document.getElementById('modalTitle').textContent = title;
+        const content = document.getElementById('modalContent');
+        content.innerHTML = html;
+        back.classList.add('open');
+        back.setAttribute('aria-hidden', 'false');
+      }
+      function closeModal() {
+        const back = document.getElementById('modalBack');
+        back.classList.remove('open');
+        back.setAttribute('aria-hidden', 'true');
+        document.getElementById('modalContent').innerHTML = '';
+      }
+      async function copyText(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const text = el.textContent || el.value || '';
+        await navigator.clipboard.writeText(text);
+      }
+      document.getElementById('modalBack').addEventListener('click', (e) => {
+        if (e.target.id === 'modalBack') closeModal();
+      });
+    </script>
+  </body>
+</html>

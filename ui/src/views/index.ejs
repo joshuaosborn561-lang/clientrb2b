@@ -1,0 +1,47 @@
+<% layout('layout', { title: 'Clients' }) %>
+
+<div class="row">
+  <div>
+    <h2 style="margin:0 0 12px 0;">Clients</h2>
+    <p class="muted" style="margin:0 0 16px 0;">Manage per-client channel + campaign IDs. Current worker stays untouched; this UI is for onboarding new clients + generating env blocks for the new worker.</p>
+  </div>
+  <div>
+    <a class="btn primary" href="/clients/new">+ New client</a>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Slack Channel ID</th>
+      <th>Status</th>
+      <th>Campaign IDs</th>
+      <th style="text-align:right;">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% if (clients.length === 0) { %>
+      <tr>
+        <td colspan="5" class="muted">No clients yet.</td>
+      </tr>
+    <% } %>
+    <% for (const c of clients) { %>
+      <tr>
+        <td><strong><%= c.name %></strong></td>
+        <td><code><%= c.slack_channel_id || '' %></code></td>
+        <td><span class="pill <%= c.status === 'active' ? 'ok' : 'off' %>"><%= c.status %></span></td>
+        <td class="muted">
+          HeyReach: <code><%= c.heyreach_campaign_id || '-' %></code><br/>
+          SmartLead: <code><%= c.smartlead_campaign_id || '-' %></code><br/>
+          ManyChat Flow: <code><%= c.manychat_flow_ns || '-' %></code>
+        </td>
+        <td style="text-align:right;">
+          <a class="btn" href="/clients/<%= c.id %>">View</a>
+          <a class="btn" href="/clients/<%= c.id %>/edit">Edit</a>
+        </td>
+      </tr>
+    <% } %>
+  </tbody>
+</table>
+
