@@ -32,9 +32,8 @@
         <td><code><%= c.slack_channel_id || '' %></code></td>
         <td><span class="pill <%= c.status === 'active' ? 'ok' : 'off' %>"><%= c.status %></span></td>
         <td class="muted">
-          HeyReach: <code><%= c.heyreach_campaign_id || '-' %></code><br/>
-          SmartLead: <code><%= c.smartlead_campaign_id || '-' %></code><br/>
-          ManyChat Flow: <code><%= c.manychat_flow_ns || '-' %></code>
+          HeyReach (LI): <code><%= c.heyreach_campaign_id || '-' %></code><br/>
+          SmartLead (email): <code><%= c.smartlead_campaign_id || '-' %></code>
         </td>
         <td style="text-align:right;">
           <a class="btn" href="/clients/<%= c.id %>">View</a>
@@ -44,4 +43,3 @@
     <% } %>
   </tbody>
 </table>
-

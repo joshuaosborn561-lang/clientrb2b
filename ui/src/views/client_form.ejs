@@ -28,24 +28,13 @@
     </div>
 
     <div class="field">
-      <label>HeyReach campaign ID (optional)</label>
+      <label>HeyReach campaign ID (LinkedIn)</label>
       <input name="heyreach_campaign_id" value="<%= client && client.heyreach_campaign_id ? client.heyreach_campaign_id : '' %>" placeholder="12345" />
     </div>
 
     <div class="field">
-      <label>SmartLead campaign ID (optional)</label>
+      <label>SmartLead campaign ID (email)</label>
       <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" />
-    </div>
-
-    <div class="field">
-      <label>ManyChat flow namespace (optional)</label>
-      <input name="manychat_flow_ns" value="<%= client && client.manychat_flow_ns ? client.manychat_flow_ns : '' %>" placeholder="content2026_04_abc123" />
-    </div>
-
-    <div class="field">
-      <label>ManyChat SMS consent phrase (optional)</label>
-      <input name="manychat_sms_consent_phrase" value="<%= client && client.manychat_sms_consent_phrase ? client.manychat_sms_consent_phrase : '' %>" placeholder="I agree to receive SMS updates." />
-      <div class="help">Needed when creating subscribers with phone + opt-in.</div>
     </div>
 
     <div class="field span-2">

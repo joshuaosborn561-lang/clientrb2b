@@ -53,7 +53,6 @@ app.use(requireBasicAuth);
 const pool = new Pool({ connectionString: DATABASE_URL, ssl: process.env.PGSSLMODE ? { rejectUnauthorized: false } : undefined });
 
 async function ensureSchema() {
-  // Needed for gen_random_uuid(). Railway Postgres typically has this available.
   await pool.query(`create extension if not exists pgcrypto;`);
   await pool.query(`
     create table if not exists clients (
@@ -63,15 +62,15 @@ async function ensureSchema() {
       slack_channel_id text not null,
       heyreach_campaign_id text,
       smartlead_campaign_id text,
-      manychat_flow_ns text,
-      manychat_sms_consent_phrase text,
       notes text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
   `);
 
-  // updated_at trigger (best-effort; if extension not available, we still function)
+  await pool.query(`alter table clients drop column if exists manychat_flow_ns;`);
+  await pool.query(`alter table clients drop column if exists manychat_sms_consent_phrase;`);
+
   await pool.query(`
     do $$
     begin
@@ -111,20 +110,11 @@ function envBlock(client) {
     ``,
     `LEADMAGIC_API_KEY=...`,
     ``,
-    `# Routing (existing integrations)`,
+    `# Email (SmartLead) + LinkedIn (HeyReach)`,
     client.heyreach_campaign_id ? `HEYREACH_CAMPAIGN_ID=${client.heyreach_campaign_id}` : `# HEYREACH_CAMPAIGN_ID=...`,
     `HEYREACH_API_KEY=...`,
     client.smartlead_campaign_id ? `SMARTLEAD_CAMPAIGN_ID=${client.smartlead_campaign_id}` : `# SMARTLEAD_CAMPAIGN_ID=...`,
     `SMARTLEAD_API_KEY=...`,
-    ``,
-    `# ManyChat SMS`,
-    `MANYCHAT_API_TOKEN=...`,
-    client.manychat_flow_ns ? `MANYCHAT_FLOW_NS=${client.manychat_flow_ns}` : `# MANYCHAT_FLOW_NS=...`,
-    client.manychat_sms_consent_phrase ? `MANYCHAT_SMS_CONSENT_PHRASE=${client.manychat_sms_consent_phrase}` : `# MANYCHAT_SMS_CONSENT_PHRASE=I agree to receive SMS updates.`,
-    ``,
-    `# Required for ManyChat createSubscriber when adding a phone`,
-    `MANYCHAT_HAS_OPT_IN_SMS=true`,
-    `MANYCHAT_HAS_OPT_IN_EMAIL=false`,
   ].join('\n');
 }
 
@@ -144,23 +134,19 @@ app.post('/clients', async (req, res) => {
     slack_channel_id,
     heyreach_campaign_id,
     smartlead_campaign_id,
-    manychat_flow_ns,
-    manychat_sms_consent_phrase,
     notes,
   } = req.body;
 
   await pool.query(
     `insert into clients
-      (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, manychat_flow_ns, manychat_sms_consent_phrase, notes)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes)
+     values ($1,$2,$3,$4,$5,$6)`,
     [
       (name || '').trim(),
       normalizeStatus(status),
       (slack_channel_id || '').trim(),
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
-      (manychat_flow_ns || '').trim() || null,
-      (manychat_sms_consent_phrase || '').trim() || null,
       (notes || '').trim() || null,
     ]
   );
@@ -188,8 +174,6 @@ app.post('/clients/:id', async (req, res) => {
     slack_channel_id,
     heyreach_campaign_id,
     smartlead_campaign_id,
-    manychat_flow_ns,
-    manychat_sms_consent_phrase,
     notes,
   } = req.body;
 
@@ -200,9 +184,7 @@ app.post('/clients/:id', async (req, res) => {
       slack_channel_id = $4,
       heyreach_campaign_id = $5,
       smartlead_campaign_id = $6,
-      manychat_flow_ns = $7,
-      manychat_sms_consent_phrase = $8,
-      notes = $9
+      notes = $7
      where id = $1`,
     [
       req.params.id,
@@ -211,8 +193,6 @@ app.post('/clients/:id', async (req, res) => {
       (slack_channel_id || '').trim(),
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
-      (manychat_flow_ns || '').trim() || null,
-      (manychat_sms_consent_phrase || '').trim() || null,
       (notes || '').trim() || null,
     ]
   );
@@ -239,4 +219,3 @@ ensureSchema()
     console.error('Failed to initialize schema', err);
     process.exit(1);
   });
-

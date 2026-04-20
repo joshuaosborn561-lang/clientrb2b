@@ -2,7 +2,7 @@
   "name": "rb2b-slack-lead-router-v2",
   "version": "2.0.0",
   "private": true,
-  "description": "Polls Slack for RB2B visitor alerts, enriches via LeadMagic, routes to HeyReach, SmartLead, and ManyChat SMS",
+  "description": "Polls Slack for RB2B visitor alerts, enriches via LeadMagic, routes to SmartLead (email) and HeyReach (LinkedIn)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

@@ -15,10 +15,8 @@
   <div class="grid">
     <div><div class="muted">Slack Channel ID</div><div><code><%= client.slack_channel_id || '' %></code></div></div>
     <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
-    <div><div class="muted">HeyReach Campaign ID</div><div><code><%= client.heyreach_campaign_id || '' %></code></div></div>
-    <div><div class="muted">SmartLead Campaign ID</div><div><code><%= client.smartlead_campaign_id || '' %></code></div></div>
-    <div><div class="muted">ManyChat Flow Namespace</div><div><code><%= client.manychat_flow_ns || '' %></code></div></div>
-    <div><div class="muted">ManyChat SMS Consent Phrase</div><div><code><%= client.manychat_sms_consent_phrase || '' %></code></div></div>
+    <div><div class="muted">HeyReach Campaign ID (LinkedIn)</div><div><code><%= client.heyreach_campaign_id || '' %></code></div></div>
+    <div><div class="muted">SmartLead Campaign ID (email)</div><div><code><%= client.smartlead_campaign_id || '' %></code></div></div>
   </div>
 
   <% if (client.notes) { %>
@@ -44,7 +42,7 @@
       <h3 style="margin: 0;">Client onboarding guide</h3>
       <button class="btn" onclick="document.getElementById('onboardModal').close()">Close</button>
     </div>
-    <p class="muted">This is the exact checklist to onboard a new client into the LeadMagic → ManyChat SMS / SmartLead routing flow.</p>
+    <p class="muted">LeadMagic enriches missing work email. Worker-v2 sends to <strong>SmartLead</strong> when email is available and <strong>HeyReach</strong> when LinkedIn is available.</p>
   </div>
   <div style="padding: 18px;">
     <h4 style="margin-top: 0;">1) RB2B → Slack</h4>
@@ -61,32 +59,19 @@
       <li>Put the bot token into Railway as <code>SLACK_TOKEN</code> for the worker-v2 service.</li>
     </ul>
 
-    <h4>3) LeadMagic enrichment</h4>
+    <h4>3) LeadMagic (email only)</h4>
     <ul>
       <li>Create a LeadMagic API key and add it to Railway as <code>LEADMAGIC_API_KEY</code>.</li>
-      <li>Worker-v2 uses:</li>
-      <ul>
-        <li><code>/v1/people/email-finder</code> to find work email when missing.</li>
-        <li><code>/v1/people/mobile-finder</code> to find a mobile number (best with LinkedIn profile URL).</li>
-      </ul>
+      <li>Worker-v2 uses <code>POST /v1/people/email-finder</code> when the RB2B alert has no email (uses name + company domain or company name).</li>
     </ul>
 
-    <h4>4) ManyChat (SMS) routing</h4>
+    <h4>4) SmartLead + HeyReach</h4>
     <ul>
-      <li>Connect the SMS channel in ManyChat for the client’s account.</li>
-      <li>Create an Automation (Flow) that should run when we have a mobile.</li>
-      <li>Copy the Flow’s namespace (ManyChat calls it <code>flow_ns</code>) and paste into <strong>ManyChat Flow Namespace</strong>.</li>
-      <li>Create a ManyChat API token and add it to Railway as <code>MANYCHAT_API_TOKEN</code>.</li>
-      <li>Set <code>MANYCHAT_SMS_CONSENT_PHRASE</code> and confirm opt-in requirements for SMS.</li>
+      <li><strong>SmartLead</strong>: set <code>SMARTLEAD_CAMPAIGN_ID</code> and <code>SMARTLEAD_API_KEY</code> in Railway (email path).</li>
+      <li><strong>HeyReach</strong>: set <code>HEYREACH_CAMPAIGN_ID</code> and <code>HEYREACH_API_KEY</code> (LinkedIn path; requires LinkedIn URL on the lead).</li>
     </ul>
 
-    <h4>5) SmartLead + HeyReach campaign IDs</h4>
-    <ul>
-      <li>Put the client’s <strong>SmartLead Campaign ID</strong> + <code>SMARTLEAD_API_KEY</code> in Railway.</li>
-      <li>Put the client’s <strong>HeyReach Campaign ID</strong> + <code>HEYREACH_API_KEY</code> in Railway (optional; requires LinkedIn URL).</li>
-    </ul>
-
-    <h4>6) Deploy worker-v2 on Railway</h4>
+    <h4>5) Deploy worker-v2 on Railway</h4>
     <ul>
       <li>Deploy a new Railway service using the <code>worker-v2/</code> folder.</li>
       <li>Set the cron schedule (example every 15 minutes) and command <code>node index.js</code>.</li>
@@ -112,4 +97,3 @@
     }
   }
 </script>
-

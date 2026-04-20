@@ -49,24 +49,4 @@ async function findWorkEmail({ firstName, lastName, companyDomain, companyName, 
   }
 }
 
-async function findMobile({ profileUrl, workEmail, personalEmail }) {
-  if (!LEADMAGIC_API_KEY) return null;
-
-  const body = {};
-  if (profileUrl) body.profile_url = profileUrl;
-  if (workEmail) body.work_email = workEmail;
-  if (personalEmail) body.personal_email = personalEmail;
-
-  try {
-    const data = await postJson('https://api.leadmagic.io/v1/people/mobile-finder', body);
-    const mobile = data?.mobile_number || null;
-    if (mobile) logger.info('LeadMagic mobile found', { mobile, credits: data?.credits_consumed });
-    return mobile;
-  } catch (err) {
-    logger.error('LeadMagic mobile-finder failed', { error: err.message });
-    return null;
-  }
-}
-
-module.exports = { findWorkEmail, findMobile };
-
+module.exports = { findWorkEmail };

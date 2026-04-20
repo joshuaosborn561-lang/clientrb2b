@@ -1,9 +1,8 @@
 const logger = require('./logger');
 const { parseRB2BMessage } = require('./parser');
-const { findWorkEmail, findMobile } = require('./leadmagic');
+const { findWorkEmail } = require('./leadmagic');
 const { addToHeyReach } = require('./heyreach');
 const { addToSmartLead } = require('./smartlead');
-const { triggerSmsFlowForLead } = require('./manychat');
 
 const SLACK_TOKEN = process.env.SLACK_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
@@ -110,7 +109,6 @@ async function main() {
   let leadsFound = 0;
   let routedHeyReach = 0;
   let routedSmartLead = 0;
-  let routedManyChat = 0;
   let skipped = 0;
   let parseFailures = 0;
 
@@ -131,7 +129,6 @@ async function main() {
       continue;
     }
 
-    // 1) Ensure we have email if possible
     let email = lead.email || null;
     if (!email) {
       try {
@@ -147,26 +144,7 @@ async function main() {
       }
     }
 
-    // 2) Find mobile (best with LinkedIn; fall back to email when available)
-    let mobile = null;
-    try {
-      mobile = await findMobile({
-        profileUrl: lead.linkedinUrl,
-        workEmail: email,
-      });
-    } catch (err) {
-      logger.error('LeadMagic mobile enrichment error', { error: err.message, lead: leadName });
-    }
-
-    // 3) Route: ManyChat SMS if mobile exists; else SmartLead if email exists
-    if (mobile) {
-      try {
-        const { triggered } = await triggerSmsFlowForLead(lead, mobile, email);
-        if (triggered) routedManyChat++;
-      } catch (err) {
-        logger.error('ManyChat routing error', { error: err.message, lead: leadName });
-      }
-    } else if (email) {
+    if (email) {
       try {
         const added = await addToSmartLead(lead, email);
         if (added) routedSmartLead++;
@@ -175,7 +153,6 @@ async function main() {
       }
     }
 
-    // Optional parallel route: HeyReach when LinkedIn exists
     if (lead.linkedinUrl) {
       try {
         const added = await addToHeyReach(lead);
@@ -186,11 +163,10 @@ async function main() {
     }
   }
 
-  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, routedManyChat, skipped, parseFailures });
+  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures });
 }
 
 main().catch((err) => {
   logger.error('Fatal error', { error: err.message });
   process.exit(1);
 });
-
