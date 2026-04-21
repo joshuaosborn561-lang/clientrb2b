@@ -19,8 +19,7 @@ You will end up with **two kinds of Railway services**:
   - Root Directory: `ui/`
   - Start command: `npm start`
   - Add a **Postgres** plugin (provides `DATABASE_URL`)
-  - Required env vars: `UI_ADMIN_PASS` (optionally `UI_ADMIN_USER`, default `admin`)
-  - Set `PGSSLMODE=require`
+  - Set `PGSSLMODE=require` (recommended on Railway)
 
 - **Worker v2 service** (one per client)
   - Root Directory: `worker-v2/`

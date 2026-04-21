@@ -1,4 +1,5 @@
 const express = require('express');
+const expressLayouts = require('express-ejs-layouts');
 const path = require('path');
 const { Pool } = require('pg');
 
@@ -13,6 +14,8 @@ if (!DATABASE_URL) {
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
+app.use(expressLayouts);
+app.set('layout', 'layout');
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
