@@ -2,7 +2,7 @@
   "name": "rb2b-lead-router-ui",
   "version": "1.0.0",
   "private": true,
-  "description": "Railway UI to manage RB2B lead router clients",
+  "description": "Website Visitor Automation — client onboarding UI",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js"

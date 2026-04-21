@@ -1,4 +1,4 @@
-## RB2B Lead Router UI (Railway)
+## Website Visitor Automation (Railway UI)
 
 This folder is a small Railway UI to manage **client records** (Slack channel ID + campaign IDs) and generate a **copy/paste env block** for deploying `worker-v2/`.
 
