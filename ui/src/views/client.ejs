@@ -56,7 +56,7 @@
       <h3 style="margin: 0;">Client onboarding guide</h3>
       <button class="btn" onclick="document.getElementById('onboardModal').close()">Close</button>
     </div>
-    <p class="muted">LeadMagic enriches missing work email. Worker-v2 sends to <strong>SmartLead</strong> when email is available and <strong>HeyReach</strong> when LinkedIn is available.</p>
+    <p class="muted"><strong>Prospeo</strong> can enrich a missing work email. Worker-v2 sends to <strong>SmartLead</strong> when email is available and <strong>HeyReach</strong> when LinkedIn is available.</p>
   </div>
   <div style="padding: 18px;">
     <h4 style="margin-top: 0;">1) RB2B → Slack</h4>
@@ -73,10 +73,10 @@
       <li>Put the bot token into Railway as <code>SLACK_TOKEN</code> for the worker-v2 service.</li>
     </ul>
 
-    <h4>3) LeadMagic (email only)</h4>
+    <h4>3) Prospeo (email when RB2B has none)</h4>
     <ul>
-      <li>Create a LeadMagic API key and add it to Railway as <code>LEADMAGIC_API_KEY</code>.</li>
-      <li>Worker-v2 uses <code>POST /v1/people/email-finder</code> when the RB2B alert has no email (uses name + company domain or company name).</li>
+      <li>Add <code>PROSPEO_API_KEY</code> to the worker (Prospeo dashboard → API key; sent as <code>X-KEY</code>).</li>
+      <li>Worker calls <code>POST https://api.prospeo.io/enrich-person</code> with <code>only_verified_email: true</code> (LinkedIn URL if present, else name + company website/name).</li>
     </ul>
 
     <h4>4) SmartLead + HeyReach</h4>

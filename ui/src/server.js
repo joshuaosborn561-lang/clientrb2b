@@ -88,7 +88,7 @@ function envBlock(client) {
     `SLACK_TOKEN=...`,
     `CHANNEL_ID=${client.slack_channel_id}`,
     ``,
-    `LEADMAGIC_API_KEY=...`,
+    `PROSPEO_API_KEY=...`,
     ``,
     `# Touchpoint ingest (same secret on UI + worker)`,
     `UI_TOUCHPOINT_INGEST_SECRET=...`,

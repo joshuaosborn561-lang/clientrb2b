@@ -1,6 +1,6 @@
 const logger = require('./logger');
 const { parseRB2BMessage } = require('./parser');
-const { findWorkEmail } = require('./leadmagic');
+const { findWorkEmail } = require('./prospeo');
 const { addToHeyReach } = require('./heyreach');
 const { addToSmartLead } = require('./smartlead');
 const { postSlackMessage } = require('./slack');
@@ -177,14 +177,9 @@ async function main() {
     if (!email) {
       try {
         const companyDomain = lead.companyWebsite ? lead.companyWebsite.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : null;
-        email = await findWorkEmail({
-          firstName: lead.firstName,
-          lastName: lead.lastName,
-          companyDomain,
-          companyName: lead.company,
-        });
+        email = await findWorkEmail({ ...lead, companyDomain });
       } catch (err) {
-        logger.error('LeadMagic email enrichment error', { error: err.message, lead: leadName });
+        logger.error('Prospeo email enrichment error', { error: err.message, lead: leadName });
       }
     }
 

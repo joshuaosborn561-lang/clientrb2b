@@ -1,10 +1,10 @@
-## `worker-v2/` (LeadMagic → SmartLead + HeyReach)
+## `worker-v2/` (Prospeo → SmartLead + HeyReach)
 
 This is a **new** worker that does **not** modify the legacy worker in the repo root.
 
 It polls a Slack channel where RB2B posts identified visitor alerts, then:
 
-- enriches missing **work email** via LeadMagic `POST /v1/people/email-finder`
+- enriches missing **work email** via Prospeo `POST https://api.prospeo.io/enrich-person` (when `PROSPEO_API_KEY` is set)
 - if an email is available, adds the lead to **SmartLead**
 - if a LinkedIn URL exists, adds the lead to **HeyReach** (independent of email)
 - posts an **enrollment summary** to the same Slack channel (`chat.postMessage`)
@@ -14,7 +14,7 @@ It polls a Slack channel where RB2B posts identified visitor alerts, then:
 
 - `SLACK_TOKEN` — bot token with `conversations:history` (read RB2B channel)
 - `CHANNEL_ID` — that client’s RB2B Slack channel ID
-- `LEADMAGIC_API_KEY`
+- `PROSPEO_API_KEY` (optional; Prospeo `X-KEY` header — omit if RB2B always includes email)
 
 ### Touchpoint / timing (optional but recommended)
 

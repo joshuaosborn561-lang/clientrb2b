@@ -4,7 +4,7 @@ This repo contains:
 
 - `index.js` (repo root): **legacy worker**. Do not modify if you have an existing client running.
 - `ui/`: **Railway UI** to add/manage clients + generate per-client env blocks.
-- `worker-v2/`: **new worker** (LeadMagic → SmartLead email + HeyReach LinkedIn) for onboarding new clients.
+- `worker-v2/`: **new worker** (Prospeo email enrichment → SmartLead + HeyReach LinkedIn) for onboarding new clients.
 
 ### Deployment model (Railway)
 
