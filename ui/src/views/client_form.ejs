@@ -1,0 +1,48 @@
+<div class="row">
+  <div class="col">
+    <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
+    <p class="muted">This UI only stores client metadata and campaign IDs. Secrets live in Railway env vars.</p>
+  </div>
+</div>
+
+<form method="post" action="<%= mode === 'new' ? '/clients' : '/clients/' + client.id %>" class="card">
+  <div class="grid">
+    <div class="field">
+      <label>Name</label>
+      <input name="name" required value="<%= client ? client.name : '' %>" placeholder="Acme Inc" />
+    </div>
+
+    <div class="field">
+      <label>Status</label>
+      <select name="status">
+        <option value="active" <%= !client || client.status === 'active' ? 'selected' : '' %>>active</option>
+        <option value="paused" <%= client && client.status === 'paused' ? 'selected' : '' %>>paused</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Slack channel ID</label>
+      <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" />
+    </div>
+
+    <div class="field">
+      <label>HeyReach campaign ID (LinkedIn)</label>
+      <input name="heyreach_campaign_id" value="<%= client && client.heyreach_campaign_id ? client.heyreach_campaign_id : '' %>" placeholder="12345" />
+    </div>
+
+    <div class="field">
+      <label>SmartLead campaign ID (email)</label>
+      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" />
+    </div>
+
+    <div class="field span-2">
+      <label>Notes (optional)</label>
+      <textarea name="notes" rows="4" placeholder="Anything about this client..."><%= client && client.notes ? client.notes : '' %></textarea>
+    </div>
+  </div>
+
+  <div class="actions">
+    <a class="btn" href="<%= mode === 'new' ? '/' : '/clients/' + client.id %>">Cancel</a>
+    <button class="btn primary" type="submit"><%= mode === 'new' ? 'Create client' : 'Save changes' %></button>
+  </div>
+</form>

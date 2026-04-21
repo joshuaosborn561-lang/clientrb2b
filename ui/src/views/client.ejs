@@ -1,0 +1,122 @@
+<div class="row" style="justify-content: space-between; align-items: flex-start;">
+  <div>
+    <h2 style="margin-top: 0;">Client: <%= client.name %></h2>
+    <div class="muted">ID: <code><%= client.id %></code></div>
+  </div>
+  <div class="row">
+    <a class="btn" href="/clients/<%= client.id %>/edit">Edit</a>
+    <a class="btn" href="/">Back</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Config</h3>
+  <div class="grid">
+    <div><div class="muted">Slack Channel ID</div><div><code><%= client.slack_channel_id || '' %></code></div></div>
+    <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
+    <div><div class="muted">HeyReach Campaign ID (LinkedIn)</div><div><code><%= client.heyreach_campaign_id || '' %></code></div></div>
+    <div><div class="muted">SmartLead Campaign ID (email)</div><div><code><%= client.smartlead_campaign_id || '' %></code></div></div>
+    <div class="span-2"><div class="muted">Webhook secret (per client)</div><div><code><%= client.webhook_secret || '' %></code></div></div>
+  </div>
+
+  <% const hookBase = (typeof publicBase !== 'undefined' && publicBase) ? publicBase : ''; %>
+  <% if (hookBase) { %>
+  <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+    <h3 style="margin-top: 0;">Webhooks (first engagement → Slack timing)</h3>
+    <p class="muted">Point SmartLead and HeyReach at these URLs. The UI records the lead when the worker enrolls them, then posts visit → first engagement to this client’s Slack channel when the webhook fires.</p>
+    <div class="muted" style="margin-bottom: 8px;"><strong>SmartLead</strong> (enable <code>EMAIL_SENT</code> or engagement events you care about)</div>
+    <pre style="white-space: pre-wrap;"><%= hookBase %>/hooks/smartlead/<%= client.id %>/<%= client.webhook_secret %></pre>
+    <div class="muted" style="margin: 12px 0 8px 0;"><strong>HeyReach</strong> (message / connection events — payload must include LinkedIn URL)</div>
+    <pre style="white-space: pre-wrap;"><%= hookBase %>/hooks/heyreach/<%= client.id %>/<%= client.webhook_secret %></pre>
+  </div>
+  <% } else { %>
+  <p class="muted" style="margin-top: 12px;">Set <code>UI_PUBLIC_URL</code> on the UI service (e.g. your Railway domain) to show full webhook URLs here.</p>
+  <% } %>
+
+  <% if (client.notes) { %>
+    <div style="margin-top: 12px;">
+      <div class="muted">Notes</div>
+      <pre style="white-space: pre-wrap; background: #0b1020; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06);"><%= client.notes %></pre>
+    </div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between; align-items: center;">
+    <h3 style="margin: 0;">Railway env block (worker-v2)</h3>
+    <button class="btn" type="button" onclick="copyEnv()">Copy</button>
+  </div>
+  <p class="muted" style="margin-top: 8px;">Paste this into the Railway service you deploy from <code>worker-v2/</code>. Do not paste into the legacy worker.</p>
+  <textarea id="envBlock" spellcheck="false" style="width: 100%; min-height: 220px; background: #0b1020; color: #e7ecff; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"><%= envBlock %></textarea>
+</div>
+
+<dialog id="onboardModal" style="max-width: 880px; width: 92vw; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; background: #0b1020; color: #e7ecff; padding: 0;">
+  <div style="padding: 18px 18px 0 18px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+    <div class="row" style="justify-content: space-between; align-items: center;">
+      <h3 style="margin: 0;">Client onboarding guide</h3>
+      <button class="btn" onclick="document.getElementById('onboardModal').close()">Close</button>
+    </div>
+    <p class="muted"><strong>Prospeo</strong> can enrich a missing work email. Worker-v2 sends to <strong>SmartLead</strong> when email is available and <strong>HeyReach</strong> when LinkedIn is available.</p>
+  </div>
+  <div style="padding: 18px;">
+    <h4 style="margin-top: 0;">1) RB2B → Slack</h4>
+    <ul>
+      <li>In RB2B, enable Slack notifications for identified visitors/leads.</li>
+      <li>Point RB2B to the client’s Slack workspace/channel for alerts.</li>
+      <li>In Slack, copy the channel ID (looks like <code>C0123ABCDEF</code>) and paste it into this client record.</li>
+    </ul>
+
+    <h4>2) Slack token</h4>
+    <ul>
+      <li>Create or reuse a Slack app/bot that can read the alert channel history.</li>
+      <li>Grant the bot scopes needed for <code>conversations.history</code> (and whatever Slack requires to read that channel).</li>
+      <li>Put the bot token into Railway as <code>SLACK_TOKEN</code> for the worker-v2 service.</li>
+    </ul>
+
+    <h4>3) Prospeo (email when RB2B has none)</h4>
+    <ul>
+      <li>Add <code>PROSPEO_API_KEY</code> to the worker (Prospeo dashboard → API key; sent as <code>X-KEY</code>).</li>
+      <li>Worker calls <code>POST https://api.prospeo.io/enrich-person</code> with <code>only_verified_email: true</code> (LinkedIn URL if present, else name + company website/name).</li>
+    </ul>
+
+    <h4>4) SmartLead + HeyReach</h4>
+    <ul>
+      <li><strong>SmartLead</strong>: set <code>SMARTLEAD_CAMPAIGN_ID</code> and <code>SMARTLEAD_API_KEY</code> in Railway (email path).</li>
+      <li><strong>HeyReach</strong>: set <code>HEYREACH_CAMPAIGN_ID</code> and <code>HEYREACH_API_KEY</code> (LinkedIn path; requires LinkedIn URL on the lead).</li>
+    </ul>
+
+    <h4>5) Visit → first engagement (webhooks)</h4>
+    <ul>
+      <li>Set <code>UI_PUBLIC_URL</code> on the UI service to your public UI URL (so this page can show full webhook URLs).</li>
+      <li>Set the same <code>UI_TOUCHPOINT_INGEST_SECRET</code> on both the <strong>UI</strong> and each client’s <strong>worker-v2</strong> service.</li>
+      <li>Add <code>SLACK_BOT_TOKEN</code> on the UI service (must be able to <code>chat.postMessage</code> into each client’s RB2B Slack channel).</li>
+      <li>In <strong>SmartLead</strong>, create a webhook pointing at the SmartLead URL on this client page; enable at least <code>EMAIL_SENT</code> (or opens/clicks/replies if you prefer).</li>
+      <li>In <strong>HeyReach</strong>, create a webhook for message / connection events pointing at the HeyReach URL on this client page (payload should include a LinkedIn profile URL).</li>
+    </ul>
+
+    <h4>6) Deploy worker-v2 on Railway</h4>
+    <ul>
+      <li>Deploy a new Railway service using the <code>worker-v2/</code> folder.</li>
+      <li>Set the cron schedule (example every 15 minutes) and command <code>node index.js</code>.</li>
+      <li>Paste the env block from this page into the service variables.</li>
+      <li>Leave the legacy service alone (it stays running for your current client).</li>
+    </ul>
+  </div>
+</dialog>
+
+<div class="row" style="justify-content: flex-end;">
+  <button class="btn primary" type="button" onclick="document.getElementById('onboardModal').showModal()">Open onboarding modal</button>
+</div>
+
+<script>
+  async function copyEnv() {
+    const el = document.getElementById('envBlock');
+    el.select();
+    el.setSelectionRange(0, el.value.length);
+    try {
+      await navigator.clipboard.writeText(el.value);
+    } catch (e) {
+      document.execCommand('copy');
+    }
+  }
+</script>
