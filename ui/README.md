@@ -11,6 +11,9 @@ It **does not** change the legacy worker in the repo root.
 - Add a Railway **Postgres** plugin to this service and ensure `DATABASE_URL` is injected.
 - Set env vars:
   - `PGSSLMODE=require`: recommended on Railway
+  - `UI_PUBLIC_URL`: your public UI URL (e.g. `https://….up.railway.app`) — used for webhook URLs on client pages
+  - `UI_TOUCHPOINT_INGEST_SECRET`: shared secret; must match each worker’s `UI_TOUCHPOINT_INGEST_SECRET`
+  - `SLACK_BOT_TOKEN`: bot token with `chat:write` to post visit→engagement updates into each client’s Slack channel
 - Start command: `npm start`
 
 ### First run / DB schema

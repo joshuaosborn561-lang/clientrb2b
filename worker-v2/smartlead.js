@@ -6,12 +6,12 @@ const SMARTLEAD_CAMPAIGN_ID = process.env.SMARTLEAD_CAMPAIGN_ID;
 async function addToSmartLead(lead, email) {
   if (!SMARTLEAD_API_KEY || !SMARTLEAD_CAMPAIGN_ID) {
     logger.warn('SmartLead config missing, skipping');
-    return false;
+    return { ok: false, reason: 'missing_config' };
   }
 
   if (!email) {
     logger.warn('No email available, skipping SmartLead', { lead: `${lead.firstName} ${lead.lastName}` });
-    return false;
+    return { ok: false, reason: 'no_email' };
   }
 
   try {
@@ -31,19 +31,25 @@ async function addToSmartLead(lead, email) {
       }),
     });
 
+    const bodyText = await res.text();
+    let data = null;
+    try {
+      data = bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      // ignore
+    }
+
     if (!res.ok) {
-      const body = await res.text();
-      logger.error('SmartLead API error', { status: res.status, body });
-      return false;
+      logger.error('SmartLead API error', { status: res.status, body: bodyText?.slice(0, 500) });
+      return { ok: false, reason: 'http_error', status: res.status, data };
     }
 
     logger.info('Added to SmartLead campaign', { lead: `${lead.firstName} ${lead.lastName}`, email });
-    return true;
+    return { ok: true, data };
   } catch (err) {
     logger.error('SmartLead request failed', { error: err.message, lead: `${lead.firstName} ${lead.lastName}` });
-    return false;
+    return { ok: false, reason: 'exception', error: err.message };
   }
 }
 
 module.exports = { addToSmartLead };
-

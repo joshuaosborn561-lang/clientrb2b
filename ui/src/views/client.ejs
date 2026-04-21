@@ -16,7 +16,22 @@
     <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
     <div><div class="muted">HeyReach Campaign ID (LinkedIn)</div><div><code><%= client.heyreach_campaign_id || '' %></code></div></div>
     <div><div class="muted">SmartLead Campaign ID (email)</div><div><code><%= client.smartlead_campaign_id || '' %></code></div></div>
+    <div class="span-2"><div class="muted">Webhook secret (per client)</div><div><code><%= client.webhook_secret || '' %></code></div></div>
   </div>
+
+  <% const hookBase = (typeof publicBase !== 'undefined' && publicBase) ? publicBase : ''; %>
+  <% if (hookBase) { %>
+  <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+    <h3 style="margin-top: 0;">Webhooks (first engagement → Slack timing)</h3>
+    <p class="muted">Point SmartLead and HeyReach at these URLs. The UI records the lead when the worker enrolls them, then posts visit → first engagement to this client’s Slack channel when the webhook fires.</p>
+    <div class="muted" style="margin-bottom: 8px;"><strong>SmartLead</strong> (enable <code>EMAIL_SENT</code> or engagement events you care about)</div>
+    <pre style="white-space: pre-wrap;"><%= hookBase %>/hooks/smartlead/<%= client.id %>/<%= client.webhook_secret %></pre>
+    <div class="muted" style="margin: 12px 0 8px 0;"><strong>HeyReach</strong> (message / connection events — payload must include LinkedIn URL)</div>
+    <pre style="white-space: pre-wrap;"><%= hookBase %>/hooks/heyreach/<%= client.id %>/<%= client.webhook_secret %></pre>
+  </div>
+  <% } else { %>
+  <p class="muted" style="margin-top: 12px;">Set <code>UI_PUBLIC_URL</code> on the UI service (e.g. your Railway domain) to show full webhook URLs here.</p>
+  <% } %>
 
   <% if (client.notes) { %>
     <div style="margin-top: 12px;">
@@ -70,7 +85,16 @@
       <li><strong>HeyReach</strong>: set <code>HEYREACH_CAMPAIGN_ID</code> and <code>HEYREACH_API_KEY</code> (LinkedIn path; requires LinkedIn URL on the lead).</li>
     </ul>
 
-    <h4>5) Deploy worker-v2 on Railway</h4>
+    <h4>5) Visit → first engagement (webhooks)</h4>
+    <ul>
+      <li>Set <code>UI_PUBLIC_URL</code> on the UI service to your public UI URL (so this page can show full webhook URLs).</li>
+      <li>Set the same <code>UI_TOUCHPOINT_INGEST_SECRET</code> on both the <strong>UI</strong> and each client’s <strong>worker-v2</strong> service.</li>
+      <li>Add <code>SLACK_BOT_TOKEN</code> on the UI service (must be able to <code>chat.postMessage</code> into each client’s RB2B Slack channel).</li>
+      <li>In <strong>SmartLead</strong>, create a webhook pointing at the SmartLead URL on this client page; enable at least <code>EMAIL_SENT</code> (or opens/clicks/replies if you prefer).</li>
+      <li>In <strong>HeyReach</strong>, create a webhook for message / connection events pointing at the HeyReach URL on this client page (payload should include a LinkedIn profile URL).</li>
+    </ul>
+
+    <h4>6) Deploy worker-v2 on Railway</h4>
     <ul>
       <li>Deploy a new Railway service using the <code>worker-v2/</code> folder.</li>
       <li>Set the cron schedule (example every 15 minutes) and command <code>node index.js</code>.</li>

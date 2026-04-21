@@ -7,12 +7,19 @@ It polls a Slack channel where RB2B posts identified visitor alerts, then:
 - enriches missing **work email** via LeadMagic `POST /v1/people/email-finder`
 - if an email is available, adds the lead to **SmartLead**
 - if a LinkedIn URL exists, adds the lead to **HeyReach** (independent of email)
+- posts an **enrollment summary** to the same Slack channel (`chat.postMessage`)
+- reports enrollments to the **UI** so webhooks can tie SmartLead/HeyReach events back to visit time
 
 ### Required env vars
 
-- `SLACK_TOKEN`
-- `CHANNEL_ID`
+- `SLACK_TOKEN` — bot token with `conversations:history` (read RB2B channel)
+- `CHANNEL_ID` — that client’s RB2B Slack channel ID
 - `LEADMAGIC_API_KEY`
+
+### Touchpoint / timing (optional but recommended)
+
+- `UI_TOUCHPOINT_INGEST_URL` — e.g. `https://your-ui.example.com/api/touchpoints/report`
+- `UI_TOUCHPOINT_INGEST_SECRET` — same value on UI + worker
 
 ### SmartLead (email)
 

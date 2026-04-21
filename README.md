@@ -20,6 +20,7 @@ You will end up with **two kinds of Railway services**:
   - Start command: `npm start`
   - Add a **Postgres** plugin (provides `DATABASE_URL`)
   - Set `PGSSLMODE=require` (recommended on Railway)
+  - Set `UI_PUBLIC_URL`, `UI_TOUCHPOINT_INGEST_SECRET`, and `SLACK_BOT_TOKEN` for webhook-driven visit→engagement Slack posts (see `ui/README.md`)
 
 - **Worker v2 service** (one per client)
   - Root Directory: `worker-v2/`

@@ -2,6 +2,7 @@ const express = require('express');
 const expressLayouts = require('express-ejs-layouts');
 const path = require('path');
 const { Pool } = require('pg');
+const { ensureTouchpointSchema, registerTouchpointRoutes } = require('./touchpoints');
 
 const app = express();
 
@@ -20,6 +21,11 @@ app.set('layout', 'layout');
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use('/static', express.static(path.join(__dirname, 'public')));
+
+app.use((req, res, next) => {
+  res.locals.publicBase = (process.env.UI_PUBLIC_URL || '').replace(/\/$/, '');
+  next();
+});
 
 const pool = new Pool({ connectionString: DATABASE_URL, ssl: process.env.PGSSLMODE ? { rejectUnauthorized: false } : undefined });
 
@@ -66,6 +72,8 @@ async function ensureSchema() {
     end
     $$;
   `);
+
+  await ensureTouchpointSchema(pool);
 }
 
 function normalizeStatus(s) {
@@ -74,6 +82,7 @@ function normalizeStatus(s) {
 }
 
 function envBlock(client) {
+  const base = (process.env.UI_PUBLIC_URL || 'https://YOUR-UI.railway.app').replace(/\/$/, '');
   return [
     `# --- Worker v2 env for: ${client.name}`,
     `SLACK_TOKEN=...`,
@@ -81,11 +90,22 @@ function envBlock(client) {
     ``,
     `LEADMAGIC_API_KEY=...`,
     ``,
+    `# Touchpoint ingest (same secret on UI + worker)`,
+    `UI_TOUCHPOINT_INGEST_SECRET=...`,
+    `UI_TOUCHPOINT_INGEST_URL=${base}/api/touchpoints/report`,
+    ``,
     `# Email (SmartLead) + LinkedIn (HeyReach)`,
     client.heyreach_campaign_id ? `HEYREACH_CAMPAIGN_ID=${client.heyreach_campaign_id}` : `# HEYREACH_CAMPAIGN_ID=...`,
     `HEYREACH_API_KEY=...`,
     client.smartlead_campaign_id ? `SMARTLEAD_CAMPAIGN_ID=${client.smartlead_campaign_id}` : `# SMARTLEAD_CAMPAIGN_ID=...`,
     `SMARTLEAD_API_KEY=...`,
+    ``,
+    `# Webhooks (configure in SmartLead + HeyReach; use client page for exact URLs)`,
+    `# SmartLead → ${base}/hooks/smartlead/${client.id}/${client.webhook_secret || 'SECRET'}`,
+    `# HeyReach → ${base}/hooks/heyreach/${client.id}/${client.webhook_secret || 'SECRET'}`,
+    ``,
+    `# UI must post back to Slack (same workspace as RB2B channel)`,
+    `SLACK_BOT_TOKEN=...`,
   ].join('\n');
 }
 
@@ -110,8 +130,8 @@ app.post('/clients', async (req, res) => {
 
   await pool.query(
     `insert into clients
-      (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes)
-     values ($1,$2,$3,$4,$5,$6)`,
+      (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes, webhook_secret)
+     values ($1,$2,$3,$4,$5,$6, encode(gen_random_bytes(24), 'hex'))`,
     [
       (name || '').trim(),
       normalizeStatus(status),
@@ -182,6 +202,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 
 ensureSchema()
   .then(() => {
+    registerTouchpointRoutes(app, pool);
     app.listen(PORT, () => {
       console.log(`UI listening on :${PORT}`);
     });
