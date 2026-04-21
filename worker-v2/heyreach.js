@@ -1,9 +1,8 @@
 const logger = require('./logger');
 
-const HEYREACH_API_KEY = process.env.HEYREACH_API_KEY;
-const HEYREACH_CAMPAIGN_ID = process.env.HEYREACH_CAMPAIGN_ID;
-
 async function addToHeyReach(lead) {
+  const HEYREACH_API_KEY = process.env.HEYREACH_API_KEY;
+  const HEYREACH_CAMPAIGN_ID = process.env.HEYREACH_CAMPAIGN_ID;
   if (!HEYREACH_API_KEY || !HEYREACH_CAMPAIGN_ID) {
     logger.warn('HeyReach config missing, skipping');
     return { ok: false, reason: 'missing_config' };

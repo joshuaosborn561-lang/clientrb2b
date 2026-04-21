@@ -1,7 +1,7 @@
 <div class="row">
   <div class="col">
     <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
-    <p class="muted">This UI only stores client metadata and campaign IDs. Secrets live in Railway env vars.</p>
+    <p class="muted">Store campaign IDs and API keys here. The worker service pulls secrets from the UI using <code>WORKER_CLIENT_ID</code>, <code>UI_PUBLIC_URL</code>, and the per-client <strong>Worker config secret</strong> (also set on Railway).</p>
   </div>
 </div>
 
@@ -21,8 +21,33 @@
     </div>
 
     <div class="field">
-      <label>Slack channel ID</label>
+      <label>Slack channel ID (RB2B alerts)</label>
       <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" />
+    </div>
+
+    <div class="field">
+      <label>Slack token (worker — read channel history)</label>
+      <input type="password" name="slack_token" value="" placeholder="<%= client && client.slack_token ? 'Leave blank to keep saved value' : 'xoxb-...' %>" autocomplete="new-password" />
+    </div>
+
+    <div class="field">
+      <label>Prospeo API key</label>
+      <input type="password" name="prospeo_api_key" value="" placeholder="<%= client && client.prospeo_api_key ? 'Leave blank to keep saved value' : 'pk_...' %>" autocomplete="new-password" />
+    </div>
+
+    <div class="field">
+      <label>SmartLead API key</label>
+      <input type="password" name="smartlead_api_key" value="" placeholder="<%= client && client.smartlead_api_key ? 'Leave blank to keep saved value' : '' %>" autocomplete="new-password" />
+    </div>
+
+    <div class="field">
+      <label>SmartLead campaign ID (email)</label>
+      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" />
+    </div>
+
+    <div class="field">
+      <label>HeyReach API key</label>
+      <input type="password" name="heyreach_api_key" value="" placeholder="<%= client && client.heyreach_api_key ? 'Leave blank to keep saved value' : '' %>" autocomplete="new-password" />
     </div>
 
     <div class="field">
@@ -31,8 +56,18 @@
     </div>
 
     <div class="field">
-      <label>SmartLead campaign ID (email)</label>
-      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" />
+      <label>Slack bot token (UI — post engagement timing to channel)</label>
+      <input type="password" name="slack_bot_token_ui" value="" placeholder="<%= client && client.slack_bot_token_ui ? 'Leave blank to keep saved value' : 'xoxb-...' %>" autocomplete="new-password" />
+    </div>
+
+    <div class="field">
+      <label>Touchpoint ingest secret (worker → UI)</label>
+      <input type="password" name="touchpoint_ingest_secret" value="" placeholder="<%= client && client.touchpoint_ingest_secret ? 'Leave blank to keep saved value' : 'auto-generated if empty on create' %>" autocomplete="new-password" />
+    </div>
+
+    <div class="field">
+      <label>Worker config secret (worker pulls config from UI)</label>
+      <input type="password" name="worker_config_secret" value="" placeholder="<%= client && client.worker_config_secret ? 'Leave blank to keep saved value' : 'auto-generated if empty on create' %>" autocomplete="new-password" />
     </div>
 
     <div class="field span-2">

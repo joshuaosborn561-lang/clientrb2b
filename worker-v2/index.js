@@ -6,9 +6,7 @@ const { addToSmartLead } = require('./smartlead');
 const { postSlackMessage } = require('./slack');
 const { parseRb2bVisitAt } = require('./visitTime');
 const { reportTouchpoint } = require('./ingest');
-
-const SLACK_TOKEN = process.env.SLACK_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
+const { loadWorkerConfig, applyWorkerConfig } = require('./config');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
 
@@ -100,16 +98,18 @@ function extractLead(msg) {
 }
 
 async function fetchAllSlackMessages(oldest) {
-  if (!SLACK_TOKEN || !CHANNEL_ID) {
+  const slackToken = process.env.SLACK_TOKEN;
+  const channelId = process.env.CHANNEL_ID;
+  if (!slackToken || !channelId) {
     throw new Error('SLACK_TOKEN and CHANNEL_ID env vars are required');
   }
   let allMessages = [];
   let cursor;
   while (true) {
-    const params = new URLSearchParams({ channel: CHANNEL_ID, oldest, limit: '200' });
+    const params = new URLSearchParams({ channel: channelId, oldest, limit: '200' });
     if (cursor) params.set('cursor', cursor);
     const res = await fetch('https://slack.com/api/conversations.history?' + params, {
-      headers: { Authorization: 'Bearer ' + SLACK_TOKEN },
+      headers: { Authorization: 'Bearer ' + slackToken },
     });
     if (!res.ok) throw new Error('Slack HTTP error: ' + res.status);
     const data = await res.json();
@@ -127,8 +127,12 @@ async function fetchAllSlackMessages(oldest) {
 async function main() {
   logger.info('RB2B lead router v2 starting');
 
+  const remote = await loadWorkerConfig();
+  applyWorkerConfig(remote);
+
+  const channelId = process.env.CHANNEL_ID;
   const oldest = String(Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS);
-  logger.info('Polling Slack', { oldest, channel: CHANNEL_ID, lookbackSeconds: LOOKBACK_SECONDS });
+  logger.info('Polling Slack', { oldest, channel: channelId, lookbackSeconds: LOOKBACK_SECONDS });
 
   let messages;
   try {
@@ -195,7 +199,7 @@ async function main() {
       if (smartResult.ok) {
         routedSmartLead++;
         await reportTouchpoint({
-          client_external_id: CHANNEL_ID,
+          client_external_id: channelId,
           lead_key: emailKey,
           type: 'enrolled_smartlead',
           slack_message_ts: slackTs,
@@ -210,7 +214,7 @@ async function main() {
       if (heyResult.ok) {
         routedHeyReach++;
         await reportTouchpoint({
-          client_external_id: CHANNEL_ID,
+          client_external_id: channelId,
           lead_key: linkedinKey,
           type: 'enrolled_heyreach',
           slack_message_ts: slackTs,

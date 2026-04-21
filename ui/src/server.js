@@ -3,6 +3,7 @@ const expressLayouts = require('express-ejs-layouts');
 const path = require('path');
 const { Pool } = require('pg');
 const { ensureTouchpointSchema, registerTouchpointRoutes } = require('./touchpoints');
+const { registerWorkerConfigRoutes } = require('./workerConfigApi');
 
 const app = express();
 
@@ -24,6 +25,11 @@ app.use('/static', express.static(path.join(__dirname, 'public')));
 
 app.use((req, res, next) => {
   res.locals.publicBase = (process.env.UI_PUBLIC_URL || '').replace(/\/$/, '');
+  res.locals.maskSecret = (v) => {
+    const s = String(v || '').trim();
+    if (!s) return '—';
+    return 'saved (···' + s.slice(-4) + ')';
+  };
   next();
 });
 
@@ -73,6 +79,12 @@ async function ensureSchema() {
     $$;
   `);
 
+  await pool.query(`alter table clients add column if not exists slack_token text;`);
+  await pool.query(`alter table clients add column if not exists prospeo_api_key text;`);
+  await pool.query(`alter table clients add column if not exists smartlead_api_key text;`);
+  await pool.query(`alter table clients add column if not exists heyreach_api_key text;`);
+  await pool.query(`alter table clients add column if not exists worker_config_secret text;`);
+
   await ensureTouchpointSchema(pool);
 }
 
@@ -81,31 +93,27 @@ function normalizeStatus(s) {
   return 'active';
 }
 
+function emptyToNull(v) {
+  const t = String(v || '').trim();
+  return t === '' ? null : t;
+}
+
 function envBlock(client) {
   const base = (process.env.UI_PUBLIC_URL || 'https://YOUR-UI.railway.app').replace(/\/$/, '');
   return [
-    `# --- Worker v2 env for: ${client.name}`,
-    `SLACK_TOKEN=...`,
-    `CHANNEL_ID=${client.slack_channel_id}`,
+    `# --- Worker v2 Railway env for: ${client.name}`,
+    `# Secrets + campaign IDs are stored in the UI; worker pulls them via the config API.`,
     ``,
-    `PROSPEO_API_KEY=...`,
+    `WORKER_CLIENT_ID=${client.id}`,
+    `UI_PUBLIC_URL=${base}`,
+    `WORKER_CONFIG_SECRET=... # must match the value saved for this client in the UI`,
     ``,
-    `# Touchpoint ingest (same secret on UI + worker)`,
-    `UI_TOUCHPOINT_INGEST_SECRET=...`,
-    `UI_TOUCHPOINT_INGEST_URL=${base}/api/touchpoints/report`,
+    `# Optional`,
+    `# LOOKBACK_SECONDS=604800`,
     ``,
-    `# Email (SmartLead) + LinkedIn (HeyReach)`,
-    client.heyreach_campaign_id ? `HEYREACH_CAMPAIGN_ID=${client.heyreach_campaign_id}` : `# HEYREACH_CAMPAIGN_ID=...`,
-    `HEYREACH_API_KEY=...`,
-    client.smartlead_campaign_id ? `SMARTLEAD_CAMPAIGN_ID=${client.smartlead_campaign_id}` : `# SMARTLEAD_CAMPAIGN_ID=...`,
-    `SMARTLEAD_API_KEY=...`,
-    ``,
-    `# Webhooks (configure in SmartLead + HeyReach; use client page for exact URLs)`,
-    `# SmartLead → ${base}/hooks/smartlead/${client.id}/${client.webhook_secret || 'SECRET'}`,
-    `# HeyReach → ${base}/hooks/heyreach/${client.id}/${client.webhook_secret || 'SECRET'}`,
-    ``,
-    `# UI must post back to Slack (same workspace as RB2B channel)`,
-    `SLACK_BOT_TOKEN=...`,
+    `# Fallback only (omit when using UI-stored secrets)`,
+    `# SLACK_TOKEN=...`,
+    `# CHANNEL_ID=${client.slack_channel_id}`,
   ].join('\n');
 }
 
@@ -126,12 +134,27 @@ app.post('/clients', async (req, res) => {
     heyreach_campaign_id,
     smartlead_campaign_id,
     notes,
+    slack_token,
+    prospeo_api_key,
+    smartlead_api_key,
+    heyreach_api_key,
+    slack_bot_token_ui,
+    touchpoint_ingest_secret,
+    worker_config_secret,
   } = req.body;
+
+  const wc =
+    emptyToNull(worker_config_secret) || (await pool.query(`select encode(gen_random_bytes(24), 'hex') as s`)).rows[0].s;
+  const ti =
+    emptyToNull(touchpoint_ingest_secret) || (await pool.query(`select encode(gen_random_bytes(24), 'hex') as s`)).rows[0].s;
 
   await pool.query(
     `insert into clients
-      (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes, webhook_secret)
-     values ($1,$2,$3,$4,$5,$6, encode(gen_random_bytes(24), 'hex'))`,
+      (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes, webhook_secret,
+       slack_token, prospeo_api_key, smartlead_api_key, heyreach_api_key, slack_bot_token_ui,
+       touchpoint_ingest_secret, worker_config_secret)
+     values ($1,$2,$3,$4,$5,$6, encode(gen_random_bytes(24), 'hex'),
+       $7,$8,$9,$10,$11,$12,$13)`,
     [
       (name || '').trim(),
       normalizeStatus(status),
@@ -139,6 +162,13 @@ app.post('/clients', async (req, res) => {
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
       (notes || '').trim() || null,
+      emptyToNull(slack_token),
+      emptyToNull(prospeo_api_key),
+      emptyToNull(smartlead_api_key),
+      emptyToNull(heyreach_api_key),
+      emptyToNull(slack_bot_token_ui),
+      ti,
+      wc,
     ]
   );
 
@@ -166,7 +196,28 @@ app.post('/clients/:id', async (req, res) => {
     heyreach_campaign_id,
     smartlead_campaign_id,
     notes,
+    slack_token,
+    prospeo_api_key,
+    smartlead_api_key,
+    heyreach_api_key,
+    slack_bot_token_ui,
+    touchpoint_ingest_secret,
+    worker_config_secret,
   } = req.body;
+
+  const { rows: curRows } = await pool.query('select * from clients where id = $1', [req.params.id]);
+  if (curRows.length === 0) return res.status(404).send('Not found');
+  const cur = curRows[0];
+
+  const nextSlackToken = emptyToNull(slack_token) != null ? emptyToNull(slack_token) : cur.slack_token;
+  const nextProspeo = emptyToNull(prospeo_api_key) != null ? emptyToNull(prospeo_api_key) : cur.prospeo_api_key;
+  const nextSl = emptyToNull(smartlead_api_key) != null ? emptyToNull(smartlead_api_key) : cur.smartlead_api_key;
+  const nextHr = emptyToNull(heyreach_api_key) != null ? emptyToNull(heyreach_api_key) : cur.heyreach_api_key;
+  const nextUiSlack = emptyToNull(slack_bot_token_ui) != null ? emptyToNull(slack_bot_token_ui) : cur.slack_bot_token_ui;
+  const nextTi =
+    emptyToNull(touchpoint_ingest_secret) != null ? emptyToNull(touchpoint_ingest_secret) : cur.touchpoint_ingest_secret;
+  const nextWc =
+    emptyToNull(worker_config_secret) != null ? emptyToNull(worker_config_secret) : cur.worker_config_secret;
 
   await pool.query(
     `update clients set
@@ -175,7 +226,14 @@ app.post('/clients/:id', async (req, res) => {
       slack_channel_id = $4,
       heyreach_campaign_id = $5,
       smartlead_campaign_id = $6,
-      notes = $7
+      notes = $7,
+      slack_token = $8,
+      prospeo_api_key = $9,
+      smartlead_api_key = $10,
+      heyreach_api_key = $11,
+      slack_bot_token_ui = $12,
+      touchpoint_ingest_secret = $13,
+      worker_config_secret = $14
      where id = $1`,
     [
       req.params.id,
@@ -185,6 +243,13 @@ app.post('/clients/:id', async (req, res) => {
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
       (notes || '').trim() || null,
+      nextSlackToken,
+      nextProspeo,
+      nextSl,
+      nextHr,
+      nextUiSlack,
+      nextTi,
+      nextWc,
     ]
   );
   res.redirect('/clients/' + req.params.id);
@@ -203,6 +268,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 ensureSchema()
   .then(() => {
     registerTouchpointRoutes(app, pool);
+    registerWorkerConfigRoutes(app, pool);
     app.listen(PORT, () => {
       console.log(`UI listening on :${PORT}`);
     });
