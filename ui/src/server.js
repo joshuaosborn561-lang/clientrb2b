@@ -6,14 +6,9 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL;
-const UI_ADMIN_USER = process.env.UI_ADMIN_USER || 'admin';
-const UI_ADMIN_PASS = process.env.UI_ADMIN_PASS;
 
 if (!DATABASE_URL) {
   throw new Error('DATABASE_URL is required for the UI service');
-}
-if (!UI_ADMIN_PASS) {
-  throw new Error('UI_ADMIN_PASS is required for the UI service');
 }
 
 app.set('view engine', 'ejs');
@@ -22,33 +17,6 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use('/static', express.static(path.join(__dirname, 'public')));
-
-function constantTimeEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  let out = 0;
-  for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return out === 0;
-}
-
-function requireBasicAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  if (!header.startsWith('Basic ')) {
-    res.set('WWW-Authenticate', 'Basic realm="rb2b-lead-router-ui"');
-    return res.status(401).send('Auth required');
-  }
-  const decoded = Buffer.from(header.slice('Basic '.length), 'base64').toString('utf8');
-  const idx = decoded.indexOf(':');
-  const user = idx >= 0 ? decoded.slice(0, idx) : decoded;
-  const pass = idx >= 0 ? decoded.slice(idx + 1) : '';
-  if (user !== UI_ADMIN_USER || !constantTimeEqual(pass, UI_ADMIN_PASS)) {
-    res.set('WWW-Authenticate', 'Basic realm="rb2b-lead-router-ui"');
-    return res.status(401).send('Invalid credentials');
-  }
-  return next();
-}
-
-app.use(requireBasicAuth);
 
 const pool = new Pool({ connectionString: DATABASE_URL, ssl: process.env.PGSSLMODE ? { rejectUnauthorized: false } : undefined });
 
