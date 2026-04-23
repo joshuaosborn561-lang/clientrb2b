@@ -4,6 +4,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const { ensureTouchpointSchema, registerTouchpointRoutes } = require('./touchpoints');
 const { registerWorkerConfigRoutes } = require('./workerConfigApi');
+const { readState, buildAuthorizeUrl, exchangeCode } = require('./slackOauth');
 
 const app = express();
 
@@ -171,7 +172,12 @@ app.get('/clients/:id', async (req, res) => {
   const { rows } = await pool.query('select * from clients where id = $1', [req.params.id]);
   if (rows.length === 0) return res.status(404).send('Not found');
   const client = rows[0];
-  res.render('client', { title: `Client: ${client.name}`, client, envBlock: envBlock(client) });
+  res.render('client', {
+    title: `Client: ${client.name}`,
+    client,
+    envBlock: envBlock(client),
+    slackOauth: req.query.slack_oauth,
+  });
 });
 
 app.get('/clients/:id/edit', async (req, res) => {
@@ -246,6 +252,48 @@ app.post('/clients/:id/toggle', async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({ ok: true }));
+
+/** Per-client: redirect to Slack OAuth to install the app in the customer's workspace. */
+app.get('/clients/:id/slack-install', async (req, res) => {
+  const { rows } = await pool.query('select id from clients where id = $1', [req.params.id]);
+  if (rows.length === 0) return res.status(404).send('Not found');
+  const out = buildAuthorizeUrl({ clientId: req.params.id });
+  if (out.error) {
+    return res
+      .status(500)
+      .send(
+        'Slack OAuth is not configured. On the UI Railway service set: SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, UI_PUBLIC_URL, and (optional) SLACK_OAUTH_STATE_SECRET.'
+      );
+  }
+  res.redirect(out.url);
+});
+
+/** Registered in the Slack app as a Redirect URL: {UI_PUBLIC_URL}/auth/slack/callback */
+app.get('/auth/slack/callback', async (req, res) => {
+  const code = req.query.code;
+  const state = req.query.state;
+  const err = req.query.error;
+  if (err) return res.redirect('/?slack_oauth=denied');
+  if (!code || !state) return res.redirect('/?slack_oauth=missing');
+  const clientId = readState(String(state));
+  if (!clientId) return res.redirect('/?slack_oauth=invalid_state');
+  const { rows } = await pool.query('select id from clients where id = $1', [clientId]);
+  if (rows.length === 0) return res.redirect('/?slack_oauth=unknown_client');
+  const tokenResult = await exchangeCode(code);
+  if (tokenResult.error) {
+    console.error('Slack OAuth exchange', tokenResult.error);
+    return res.redirect('/clients/' + clientId + '?slack_oauth=failed');
+  }
+  const token = tokenResult.access_token;
+  if (!token) return res.redirect('/clients/' + clientId + '?slack_oauth=no_token');
+  const dup = /^1|true|yes$/i.test(String(process.env.SLACK_DUPLICATE_TOKENS || '').trim());
+  if (dup) {
+    await pool.query('update clients set slack_token = $2, slack_bot_token_ui = $2 where id = $1', [clientId, token]);
+  } else {
+    await pool.query('update clients set slack_token = $2 where id = $1', [clientId, token]);
+  }
+  res.redirect('/clients/' + clientId + '?slack_oauth=ok');
+});
 
 ensureSchema()
   .then(() => {

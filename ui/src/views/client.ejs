@@ -4,10 +4,21 @@
     <div class="muted">ID: <code><%= client.id %></code></div>
   </div>
   <div class="row">
+    <a class="btn" href="/clients/<%= client.id %>/slack-install">Add Slack app to client workspace</a>
     <a class="btn" href="/clients/<%= client.id %>/edit">Edit</a>
     <a class="btn" href="/">Back</a>
   </div>
 </div>
+
+<% if (typeof slackOauth !== 'undefined' && slackOauth) { %>
+  <p class="muted" style="margin:0 0 12px 0;padding:10px 12px;border-radius:10px;border:1px solid rgba(110,168,254,0.35);background:rgba(110,168,254,0.1);">
+    <% if (slackOauth === 'ok') { %><strong>Slack connected.</strong> Bot token saved for the worker. If you set <code>SLACK_DUPLICATE_TOKENS=1</code> on the UI, the same token was also saved for UI engagement posts. Invite the bot to the RB2B channel if needed.<% } else { %>Slack OAuth: <code><%= slackOauth %></code><% } %>
+  </p>
+<% } %>
+
+<% if (publicBase) { %>
+  <p class="muted" style="margin:0 0 12px 0;">In your Slack app → <strong>OAuth &amp; Permissions</strong> → <strong>Redirect URLs</strong>, add: <code><%= publicBase %>/auth/slack/callback</code></p>
+<% } %>
 
 <div class="card">
   <h3 style="margin-top: 0;">Config</h3>
