@@ -121,7 +121,7 @@ function envBlock(client) {
 
 app.get('/', async (req, res) => {
   const { rows } = await pool.query('select * from clients order by created_at desc');
-  res.render('index', { title: 'Clients', clients: rows });
+  res.render('index', { title: 'Clients', clients: rows, slackOauth: req.query.slack_oauth });
 });
 
 app.get('/clients/new', async (req, res) => {
@@ -274,7 +274,10 @@ app.get('/auth/slack/callback', async (req, res) => {
   const state = req.query.state;
   const err = req.query.error;
   if (err) return res.redirect('/?slack_oauth=denied');
-  if (!code || !state) return res.redirect('/?slack_oauth=missing');
+  if (!code || !state) {
+    console.warn('Slack OAuth callback without code/state (open /auth/slack/callback directly, or wrong redirect URL).');
+    return res.redirect('/?slack_oauth=missing');
+  }
   const clientId = readState(String(state));
   if (!clientId) return res.redirect('/?slack_oauth=invalid_state');
   const { rows } = await pool.query('select id from clients where id = $1', [clientId]);
