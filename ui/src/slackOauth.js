@@ -12,8 +12,30 @@ function stateSecret() {
   return process.env.SLACK_OAUTH_STATE_SECRET || process.env.SLACK_CLIENT_SECRET || '';
 }
 
+/**
+ * Public HTTPS origin for this UI (no trailing slash).
+ * Uses UI_PUBLIC_URL first, then Railway-injected public hostname so it matches
+ * the URL we register in Slack even if UI_PUBLIC_URL was never set.
+ */
 function publicBase() {
-  return (process.env.UI_PUBLIC_URL || '').replace(/\/$/, '');
+  const raw = String(process.env.UI_PUBLIC_URL || '')
+    .trim()
+    .replace(/\/$/, '');
+  if (raw) {
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (!/^\/\//.test(raw)) return 'https://' + raw;
+  }
+  const h = String(
+    process.env.RAILWAY_PUBLIC_DOMAIN ||
+      process.env.RAILWAY_SERVICE_UI_URL ||
+      process.env.RAILWAY_STATIC_URL ||
+      ''
+  )
+    .replace(/^https?:\/\//i, '')
+    .split('/')[0]
+    .trim();
+  if (h) return 'https://' + h;
+  return '';
 }
 
 function makeState(clientId) {
