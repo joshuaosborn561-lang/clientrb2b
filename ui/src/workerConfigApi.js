@@ -1,6 +1,6 @@
 /**
  * Worker pulls full client secrets from the UI via GET /api/worker-config/:clientId
- * (Authorization: Bearer WORKER_CONFIG_SECRET — same value on UI and worker Railway services).
+ * Authorization: Bearer WORKER_CONFIG_SECRET — set the same value on the UI service and worker (Railway env).
  */
 
 function workerConfigSecretGlobal() {
@@ -29,8 +29,7 @@ function registerWorkerConfigRoutes(app, pool) {
     }
 
     const c = rows[0];
-    const expected =
-      String(c.worker_config_secret || '').trim() || workerConfigSecretGlobal();
+    const expected = workerConfigSecretGlobal();
     if (!expected || token !== expected) {
       return res.status(401).json({ ok: false, error: 'unauthorized' });
     }

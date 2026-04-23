@@ -23,11 +23,6 @@ async function ensureTouchpointSchema(pool) {
     set touchpoint_ingest_secret = encode(gen_random_bytes(24), 'hex')
     where touchpoint_ingest_secret is null or touchpoint_ingest_secret = '';
   `);
-  await pool.query(`
-    update clients
-    set worker_config_secret = encode(gen_random_bytes(24), 'hex')
-    where worker_config_secret is null or worker_config_secret = '';
-  `);
 
   await pool.query(`
     create table if not exists lead_touchpoints (

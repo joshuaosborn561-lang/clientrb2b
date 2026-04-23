@@ -21,8 +21,6 @@
     <div><div class="muted">HeyReach API key</div><div><%= maskSecret(client.heyreach_api_key) %></div></div>
     <div><div class="muted">HeyReach campaign ID</div><div><code><%= client.heyreach_campaign_id || '—' %></code></div></div>
     <div><div class="muted">Slack bot token (UI posts)</div><div><%= maskSecret(client.slack_bot_token_ui) %></div></div>
-    <div><div class="muted">Touchpoint ingest secret</div><div><%= maskSecret(client.touchpoint_ingest_secret) %></div></div>
-    <div><div class="muted">Worker config secret</div><div><%= maskSecret(client.worker_config_secret) %></div></div>
     <div class="span-2"><div class="muted">Webhook secret (SmartLead / HeyReach URLs)</div><div><code><%= client.webhook_secret || '' %></code></div></div>
   </div>
 
@@ -53,9 +51,8 @@
     <h3 style="margin: 0;">Railway env (worker-v2)</h3>
     <button class="btn" type="button" onclick="copyEnv()">Copy</button>
   </div>
-  <p class="muted" style="margin-top: 8px;">Deploy from <code>worker-v2/</code>. Set these three variables; the worker loads Prospeo, SmartLead, HeyReach, Slack tokens, and touchpoint settings from the UI database.</p>
+  <p class="muted" style="margin-top: 8px;">Deploy from <code>worker-v2/</code>. Set these variables on the worker; also set <code>WORKER_CONFIG_SECRET</code> on the <strong>UI</strong> service to the same value so the worker can call the config API.</p>
   <textarea id="envBlock" spellcheck="false" style="width: 100%; min-height: 180px; background: #0b1020; color: #e7ecff; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"><%= envBlock %></textarea>
-  <p class="muted" style="margin-top: 10px;"><code>WORKER_CONFIG_SECRET</code> must match the per-client <strong>Worker config secret</strong> saved above (or set a global <code>WORKER_CONFIG_SECRET</code> on the UI only for legacy compatibility).</p>
 </div>
 
 <dialog id="onboardModal" style="max-width: 880px; width: 92vw; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; background: #0b1020; color: #e7ecff; padding: 0;">
@@ -79,8 +76,7 @@
       <li><strong>Slack token (worker)</strong>: bot token with access to read the RB2B alert channel (<code>conversations.history</code>).</li>
       <li><strong>Slack bot token (UI)</strong>: token used by this app to <code>chat.postMessage</code> visit → engagement timing into the same channel.</li>
       <li><strong>Prospeo</strong>, <strong>SmartLead</strong>, and <strong>HeyReach</strong> keys and campaign IDs are stored here and fetched by the worker at runtime.</li>
-      <li><strong>Touchpoint ingest secret</strong> must match what the worker uses to POST enrollments to <code>/api/touchpoints/report</code> (the worker receives it from the config API).</li>
-      <li><strong>Worker config secret</strong> must match <code>WORKER_CONFIG_SECRET</code> on the worker service so it can call <code>GET /api/worker-config/:clientId</code>.</li>
+      <li>Set the same <code>WORKER_CONFIG_SECRET</code> on the UI service and the worker; the worker uses it to call <code>GET /api/worker-config/:clientId</code> and receives the touchpoint ingest secret for enrollments.</li>
     </ul>
 
     <h4>3) Prospeo (email when RB2B has none)</h4>
@@ -91,7 +87,7 @@
     <h4>4) Deploy worker-v2 on Railway</h4>
     <ul>
       <li>Create a service from the <code>worker-v2/</code> folder.</li>
-      <li>Set <code>WORKER_CLIENT_ID</code> to this client’s UUID, <code>UI_PUBLIC_URL</code> to the UI URL, and <code>WORKER_CONFIG_SECRET</code> to the same value as the client’s worker config secret.</li>
+      <li>Set <code>WORKER_CLIENT_ID</code> to this client’s UUID, <code>UI_PUBLIC_URL</code> to the UI URL, and <code>WORKER_CONFIG_SECRET</code> to match the UI service.</li>
       <li>Set the cron schedule (for example every 15 minutes) and command <code>node index.js</code>.</li>
       <li>Leave the legacy worker alone (it stays running for your current client).</li>
     </ul>

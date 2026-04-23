@@ -17,7 +17,6 @@ create table if not exists clients (
   heyreach_api_key text,
   slack_bot_token_ui text,
   touchpoint_ingest_secret text,
-  worker_config_secret text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

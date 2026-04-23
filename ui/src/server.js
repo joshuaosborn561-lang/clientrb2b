@@ -83,7 +83,7 @@ async function ensureSchema() {
   await pool.query(`alter table clients add column if not exists prospeo_api_key text;`);
   await pool.query(`alter table clients add column if not exists smartlead_api_key text;`);
   await pool.query(`alter table clients add column if not exists heyreach_api_key text;`);
-  await pool.query(`alter table clients add column if not exists worker_config_secret text;`);
+  await pool.query(`alter table clients drop column if exists worker_config_secret;`);
 
   await ensureTouchpointSchema(pool);
 }
@@ -102,16 +102,17 @@ function envBlock(client) {
   const base = (process.env.UI_PUBLIC_URL || 'https://YOUR-UI.railway.app').replace(/\/$/, '');
   return [
     `# --- Worker v2 Railway env for: ${client.name}`,
-    `# Secrets + campaign IDs are stored in the UI; worker pulls them via the config API.`,
+    `# Integration keys live in this UI (Postgres); worker pulls them via GET /api/worker-config/:id`,
     ``,
     `WORKER_CLIENT_ID=${client.id}`,
     `UI_PUBLIC_URL=${base}`,
-    `WORKER_CONFIG_SECRET=... # must match the value saved for this client in the UI`,
+    `# Same token on BOTH the UI service and this worker (Railway variables):`,
+    `WORKER_CONFIG_SECRET=...`,
     ``,
     `# Optional`,
     `# LOOKBACK_SECONDS=604800`,
     ``,
-    `# Fallback only (omit when using UI-stored secrets)`,
+    `# Fallback only if not using config API`,
     `# SLACK_TOKEN=...`,
     `# CHANNEL_ID=${client.slack_channel_id}`,
   ].join('\n');
@@ -139,22 +140,15 @@ app.post('/clients', async (req, res) => {
     smartlead_api_key,
     heyreach_api_key,
     slack_bot_token_ui,
-    touchpoint_ingest_secret,
-    worker_config_secret,
   } = req.body;
-
-  const wc =
-    emptyToNull(worker_config_secret) || (await pool.query(`select encode(gen_random_bytes(24), 'hex') as s`)).rows[0].s;
-  const ti =
-    emptyToNull(touchpoint_ingest_secret) || (await pool.query(`select encode(gen_random_bytes(24), 'hex') as s`)).rows[0].s;
 
   await pool.query(
     `insert into clients
       (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes, webhook_secret,
        slack_token, prospeo_api_key, smartlead_api_key, heyreach_api_key, slack_bot_token_ui,
-       touchpoint_ingest_secret, worker_config_secret)
+       touchpoint_ingest_secret)
      values ($1,$2,$3,$4,$5,$6, encode(gen_random_bytes(24), 'hex'),
-       $7,$8,$9,$10,$11,$12,$13)`,
+       $7,$8,$9,$10,$11, encode(gen_random_bytes(24), 'hex'))`,
     [
       (name || '').trim(),
       normalizeStatus(status),
@@ -167,8 +161,6 @@ app.post('/clients', async (req, res) => {
       emptyToNull(smartlead_api_key),
       emptyToNull(heyreach_api_key),
       emptyToNull(slack_bot_token_ui),
-      ti,
-      wc,
     ]
   );
 
@@ -201,8 +193,6 @@ app.post('/clients/:id', async (req, res) => {
     smartlead_api_key,
     heyreach_api_key,
     slack_bot_token_ui,
-    touchpoint_ingest_secret,
-    worker_config_secret,
   } = req.body;
 
   const { rows: curRows } = await pool.query('select * from clients where id = $1', [req.params.id]);
@@ -214,10 +204,6 @@ app.post('/clients/:id', async (req, res) => {
   const nextSl = emptyToNull(smartlead_api_key) != null ? emptyToNull(smartlead_api_key) : cur.smartlead_api_key;
   const nextHr = emptyToNull(heyreach_api_key) != null ? emptyToNull(heyreach_api_key) : cur.heyreach_api_key;
   const nextUiSlack = emptyToNull(slack_bot_token_ui) != null ? emptyToNull(slack_bot_token_ui) : cur.slack_bot_token_ui;
-  const nextTi =
-    emptyToNull(touchpoint_ingest_secret) != null ? emptyToNull(touchpoint_ingest_secret) : cur.touchpoint_ingest_secret;
-  const nextWc =
-    emptyToNull(worker_config_secret) != null ? emptyToNull(worker_config_secret) : cur.worker_config_secret;
 
   await pool.query(
     `update clients set
@@ -231,9 +217,7 @@ app.post('/clients/:id', async (req, res) => {
       prospeo_api_key = $9,
       smartlead_api_key = $10,
       heyreach_api_key = $11,
-      slack_bot_token_ui = $12,
-      touchpoint_ingest_secret = $13,
-      worker_config_secret = $14
+      slack_bot_token_ui = $12
      where id = $1`,
     [
       req.params.id,
@@ -248,8 +232,6 @@ app.post('/clients/:id', async (req, res) => {
       nextSl,
       nextHr,
       nextUiSlack,
-      nextTi,
-      nextWc,
     ]
   );
   res.redirect('/clients/' + req.params.id);
