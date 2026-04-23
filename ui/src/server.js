@@ -121,7 +121,7 @@ function envBlock(client) {
 
 app.get('/', async (req, res) => {
   const { rows } = await pool.query('select * from clients order by created_at desc');
-  res.render('index', { title: 'Clients', clients: rows, slackOauth: req.query.slack_oauth });
+  res.render('index', { title: 'Clients', clients: rows });
 });
 
 app.get('/clients/new', async (req, res) => {
@@ -172,12 +172,7 @@ app.get('/clients/:id', async (req, res) => {
   const { rows } = await pool.query('select * from clients where id = $1', [req.params.id]);
   if (rows.length === 0) return res.status(404).send('Not found');
   const client = rows[0];
-  res.render('client', {
-    title: `Client: ${client.name}`,
-    client,
-    envBlock: envBlock(client),
-    slackOauth: req.query.slack_oauth,
-  });
+  res.render('client', { title: `Client: ${client.name}`, client, envBlock: envBlock(client) });
 });
 
 app.get('/clients/:id/edit', async (req, res) => {
@@ -253,6 +248,58 @@ app.post('/clients/:id/toggle', async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+/**
+ * Standalone page for Slack OAuth outcome (no client list / no API key surface).
+ * Query: ok=1&client=UUID | err=CODE&client=UUID(optional)
+ */
+app.get('/auth/slack/result', (req, res) => {
+  const clientId = String(req.query.client || '').trim() || null;
+  if (req.query.ok === '1' && clientId) {
+    return res.render('slack_oauth_result', {
+      layout: false,
+      isOk: true,
+      heading: 'Slack connected',
+      message: 'The bot token for this client was saved. Invite the bot to the RB2B channel if needed, then you can return to the client page.',
+      clientId,
+    });
+  }
+  const err = String(req.query.err || '').toLowerCase();
+  const withClient = clientId
+    ? ' <a href="/clients/' + clientId + '">Open this client</a> to try again.'
+    : ' Open a client and use <strong>Add Slack app to client workspace</strong> from there.';
+  const table = {
+    missing: {
+      h: 'Slack did not send an authorization code',
+      m:
+        'You may have opened the callback URL directly, or the redirect URL in your Slack app does not match <code>' +
+        (process.env.UI_PUBLIC_URL || '').replace(/\/$/, '') +
+        '/auth/slack/callback</code> exactly. Start from the client’s “Add Slack app” link, not the redirect field in Slack’s settings.' +
+        withClient,
+    },
+    denied: { h: 'Slack install was cancelled', m: 'You can try again from the client page.' + withClient },
+    invalid_state: { h: 'Request expired or invalid', m: 'Start the install again from the client page (link is only valid a few minutes).' + withClient },
+    unknown_client: { h: 'Unknown client', m: 'The client record may have been removed. Open the home page and pick a client again.' },
+    failed: { h: 'Could not complete Slack sign-in', m: 'The token exchange failed. Check <code>SLACK_CLIENT_ID</code>, <code>SLACK_CLIENT_SECRET</code>, and that the redirect URL in Slack matches this app’s <code>UI_PUBLIC_URL</code>.' + withClient },
+    no_token: { h: 'No bot token from Slack', m: 'Slack did not return an access token. Check bot scopes and try reinstalling the app in that workspace.' + withClient },
+  };
+  const row = table[err] || { h: 'Something went wrong', m: 'Try the Slack install again from a client page.' + withClient };
+  return res.render('slack_oauth_result', {
+    layout: false,
+    isOk: false,
+    heading: row.h,
+    message: row.m,
+    clientId,
+  });
+});
+
+function slackResultPath(ok, err, clientId) {
+  if (ok && clientId) return '/auth/slack/result?ok=1&client=' + encodeURIComponent(clientId);
+  const p = new URLSearchParams();
+  p.set('err', err);
+  if (clientId) p.set('client', clientId);
+  return '/auth/slack/result?' + p.toString();
+}
+
 /** Per-client: redirect to Slack OAuth to install the app in the customer's workspace. */
 app.get('/clients/:id/slack-install', async (req, res) => {
   const { rows } = await pool.query('select id from clients where id = $1', [req.params.id]);
@@ -273,29 +320,29 @@ app.get('/auth/slack/callback', async (req, res) => {
   const code = req.query.code;
   const state = req.query.state;
   const err = req.query.error;
-  if (err) return res.redirect('/?slack_oauth=denied');
+  if (err) return res.redirect(slackResultPath(false, 'denied', null));
   if (!code || !state) {
     console.warn('Slack OAuth callback without code/state (open /auth/slack/callback directly, or wrong redirect URL).');
-    return res.redirect('/?slack_oauth=missing');
+    return res.redirect(slackResultPath(false, 'missing', null));
   }
   const clientId = readState(String(state));
-  if (!clientId) return res.redirect('/?slack_oauth=invalid_state');
+  if (!clientId) return res.redirect(slackResultPath(false, 'invalid_state', null));
   const { rows } = await pool.query('select id from clients where id = $1', [clientId]);
-  if (rows.length === 0) return res.redirect('/?slack_oauth=unknown_client');
+  if (rows.length === 0) return res.redirect(slackResultPath(false, 'unknown_client', null));
   const tokenResult = await exchangeCode(code);
   if (tokenResult.error) {
     console.error('Slack OAuth exchange', tokenResult.error);
-    return res.redirect('/clients/' + clientId + '?slack_oauth=failed');
+    return res.redirect(slackResultPath(false, 'failed', clientId));
   }
   const token = tokenResult.access_token;
-  if (!token) return res.redirect('/clients/' + clientId + '?slack_oauth=no_token');
+  if (!token) return res.redirect(slackResultPath(false, 'no_token', clientId));
   const dup = /^1|true|yes$/i.test(String(process.env.SLACK_DUPLICATE_TOKENS || '').trim());
   if (dup) {
     await pool.query('update clients set slack_token = $2, slack_bot_token_ui = $2 where id = $1', [clientId, token]);
   } else {
     await pool.query('update clients set slack_token = $2 where id = $1', [clientId, token]);
   }
-  res.redirect('/clients/' + clientId + '?slack_oauth=ok');
+  res.redirect(slackResultPath(true, null, clientId));
 });
 
 ensureSchema()
