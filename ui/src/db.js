@@ -30,6 +30,7 @@ async function ensureSchema() {
       heyreach_api_key text,
       slack_bot_token_ui text,
       touchpoint_ingest_secret text,
+      slack_install_token text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );

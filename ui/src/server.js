@@ -86,6 +86,13 @@ async function ensureSchema() {
   await pool.query(`alter table clients add column if not exists smartlead_api_key text;`);
   await pool.query(`alter table clients add column if not exists heyreach_api_key text;`);
   await pool.query(`alter table clients drop column if exists worker_config_secret;`);
+  await pool.query(`alter table clients add column if not exists slack_install_token text;`);
+  await pool.query(`create unique index if not exists clients_slack_install_token_key on clients(slack_install_token) where slack_install_token is not null;`);
+  await pool.query(`
+    update clients
+    set slack_install_token = encode(gen_random_bytes(18), 'hex')
+    where slack_install_token is null or slack_install_token = '';
+  `);
 
   await ensureTouchpointSchema(pool);
 }
@@ -126,13 +133,24 @@ app.get('/', async (req, res) => {
 });
 
 /**
+ * Public shareable link: maps secret token → client, then same OAuth as /clients/:id/slack-install.
+ * Send this URL to the customer; when they open it, the bot token is stored on *this* client row.
+ */
+app.get('/install/slack/:token', async (req, res) => {
+  const token = String(req.params.token || '')
+    .trim()
+    .replace(/[^0-9a-f]/gi, '');
+  if (!token) return res.status(404).send('Not found');
+  const { rows } = await pool.query('select id from clients where slack_install_token = $1', [token]);
+  if (rows.length === 0) return res.status(404).send('Invalid or expired install link. Ask for a new link from the client page.');
+  return redirectSlackOAuth(req, res, rows[0].id);
+});
+
+/**
  * Must be registered before `GET /clients/:id` so `slack-install` is not captured as an :id.
  */
-app.get('/clients/:id/slack-install', async (req, res) => {
-  if (req.params.id === 'new') return res.status(404).send('Not found');
-  const { rows } = await pool.query('select id from clients where id = $1', [req.params.id]);
-  if (rows.length === 0) return res.status(404).send('Not found');
-  const out = buildAuthorizeUrl({ clientId: req.params.id, req });
+function redirectSlackOAuth(req, res, clientUuid) {
+  const out = buildAuthorizeUrl({ clientId: clientUuid, req });
   if (out.error) {
     return res
       .status(500)
@@ -140,7 +158,14 @@ app.get('/clients/:id/slack-install', async (req, res) => {
         'Slack OAuth is not configured. On the UI Railway service set: SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, and a public base URL (UI_PUBLIC_URL or Railway will infer from RAILWAY_PUBLIC_DOMAIN).'
       );
   }
-  res.redirect(out.url);
+  return res.redirect(out.url);
+}
+
+app.get('/clients/:id/slack-install', async (req, res) => {
+  if (req.params.id === 'new') return res.status(404).send('Not found');
+  const { rows } = await pool.query('select id from clients where id = $1', [req.params.id]);
+  if (rows.length === 0) return res.status(404).send('Not found');
+  return redirectSlackOAuth(req, res, req.params.id);
 });
 
 app.get('/clients/new', async (req, res) => {
@@ -166,9 +191,9 @@ app.post('/clients', async (req, res) => {
     `insert into clients
       (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes, webhook_secret,
        slack_token, prospeo_api_key, smartlead_api_key, heyreach_api_key, slack_bot_token_ui,
-       touchpoint_ingest_secret)
+       touchpoint_ingest_secret, slack_install_token)
      values ($1,$2,$3,$4,$5,$6, encode(gen_random_bytes(24), 'hex'),
-       $7,$8,$9,$10,$11, encode(gen_random_bytes(24), 'hex'))`,
+       $7,$8,$9,$10,$11, encode(gen_random_bytes(24), 'hex'), encode(gen_random_bytes(18), 'hex'))`,
     [
       (name || '').trim(),
       normalizeStatus(status),
@@ -191,7 +216,14 @@ app.get('/clients/:id', async (req, res) => {
   const { rows } = await pool.query('select * from clients where id = $1', [req.params.id]);
   if (rows.length === 0) return res.status(404).send('Not found');
   const client = rows[0];
-  res.render('client', { title: `Client: ${client.name}`, client, envBlock: envBlock(client) });
+  const base = publicBaseFromRequest(req) || publicBase();
+  const shareInstallUrl = base && client.slack_install_token ? base + '/install/slack/' + client.slack_install_token : '';
+  res.render('client', {
+    title: `Client: ${client.name}`,
+    client,
+    envBlock: envBlock(client),
+    shareInstallUrl,
+  });
 });
 
 app.get('/clients/:id/edit', async (req, res) => {

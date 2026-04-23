@@ -4,14 +4,23 @@
     <div class="muted">ID: <code><%= client.id %></code></div>
   </div>
   <div class="row">
-    <a class="btn" href="/clients/<%= client.id %>/slack-install">Add Slack app to client workspace</a>
+    <a class="btn" href="/clients/<%= client.id %>/slack-install">Add Slack (you)</a>
     <a class="btn" href="/clients/<%= client.id %>/edit">Edit</a>
     <a class="btn" href="/">Back</a>
   </div>
 </div>
 
 <% if (publicBase) { %>
-  <p class="muted" style="margin:0 0 12px 0;">In your Slack app → <strong>OAuth &amp; Permissions</strong> → <strong>Redirect URLs</strong>, add: <code><%= publicBase %>/auth/slack/callback</code> and save. <strong>Do not</strong> use Slack’s <strong>Install App</strong> button in the API site for this flow — use <strong>Add Slack app to client workspace</strong> here so <code>redirect_uri</code> is set.</p>
+  <p class="muted" style="margin:0 0 8px 0;">In your Slack app → <strong>OAuth &amp; Permissions</strong> → <strong>Redirect URLs</strong>, add: <code><%= publicBase %>/auth/slack/callback</code> and save. <strong>Do not</strong> use Slack’s <strong>Install App</strong> in the API site (empty <code>redirect_uri</code>).</p>
+  <% if (typeof shareInstallUrl !== 'undefined' && shareInstallUrl) { %>
+  <div class="card" style="margin:0 0 14px 0;padding:14px;border:1px solid rgba(110,168,254,0.25);">
+    <h4 style="margin:0 0 8px 0;">Link for the customer to install the app in their workspace</h4>
+    <p class="muted" style="margin:0 0 8px 0;">Opening this link starts OAuth for <strong>this</strong> client only (the long secret in the path is tied to this client). Send it to someone who can click <strong>Allow</strong> in their Slack. Not for posting publicly.</p>
+    <p style="margin:0;word-break:break-all;"><a href="<%= shareInstallUrl %>"><%= shareInstallUrl %></a></p>
+    <p style="margin:8px 0 0 0;"><button class="btn" type="button" id="cpyInstall">Copy link</button></p>
+    <script>document.getElementById("cpyInstall").addEventListener("click",()=>{navigator.clipboard.writeText(<%= JSON.stringify(shareInstallUrl) %>).catch(()=>{});});</script>
+  </div>
+  <% } %>
 <% } %>
 
 <div class="card">
