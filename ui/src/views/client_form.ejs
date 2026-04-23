@@ -1,7 +1,10 @@
 <div class="row">
   <div class="col">
     <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
-    <p class="muted">Set channel, campaign IDs, and integration keys here. The worker reads them from this app (see Railway env block on the client page after save).</p>
+    <p class="muted">
+      <strong>Required for the worker</strong> (when it loads config from this app): Slack channel ID, Slack token (read RB2B channel), SmartLead key + campaign if you want email, HeyReach key + campaign if you want LinkedIn.
+      <strong>Optional:</strong> Prospeo (find work email when RB2B has none). <strong>For visit → engagement Slack posts:</strong> Slack bot token (UI). The two “secret” fields at the bottom are auto-filled on create; copy the worker config secret into Railway (<code>WORKER_CONFIG_SECRET</code>) — leave blank on edit to keep.
+    </p>
   </div>
 </div>
 
@@ -25,45 +28,9 @@
       <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" class="mono" spellcheck="false" />
     </div>
 
-    <div class="field-block">
-      <h2 class="section-head">API keys &amp; tokens</h2>
-      <p class="muted">Paste keys below — they are stored in the database for this client. On <strong>edit</strong>, leave a field empty to keep the previous value.</p>
-      <div class="grid">
-        <div class="field">
-          <label>Slack token (worker — read channel history)</label>
-          <input type="text" name="slack_token" value="" placeholder="<%= client && client.slack_token ? '(unchanged if left blank)' : 'xoxb-...' %>" class="mono" spellcheck="false" autocapitalize="off" />
-        </div>
-
-        <div class="field">
-          <label>Prospeo API key</label>
-          <input type="text" name="prospeo_api_key" value="" placeholder="<%= client && client.prospeo_api_key ? '(unchanged if left blank)' : 'pk_...' %>" class="mono" spellcheck="false" autocapitalize="off" />
-        </div>
-
-        <div class="field">
-          <label>SmartLead API key</label>
-          <input type="text" name="smartlead_api_key" value="" placeholder="<%= client && client.smartlead_api_key ? '(unchanged if left blank)' : 'Your SmartLead API key' %>" class="mono" spellcheck="false" autocapitalize="off" />
-        </div>
-
-        <div class="field">
-          <label>HeyReach API key</label>
-          <input type="text" name="heyreach_api_key" value="" placeholder="<%= client && client.heyreach_api_key ? '(unchanged if left blank)' : 'Your HeyReach API key' %>" class="mono" spellcheck="false" autocapitalize="off" />
-        </div>
-
-        <div class="field">
-          <label>Slack bot token (UI — post engagement timing)</label>
-          <input type="text" name="slack_bot_token_ui" value="" placeholder="<%= client && client.slack_bot_token_ui ? '(unchanged if left blank)' : 'xoxb-... (chat.postMessage)' %>" class="mono" spellcheck="false" autocapitalize="off" />
-        </div>
-
-        <div class="field">
-          <label>Touchpoint ingest secret (optional)</label>
-          <input type="text" name="touchpoint_ingest_secret" value="" placeholder="<%= client && client.touchpoint_ingest_secret ? '(unchanged if left blank)' : 'Leave blank to auto-generate on create' %>" class="mono" spellcheck="false" autocapitalize="off" />
-        </div>
-
-        <div class="field">
-          <label>Worker config secret (optional)</label>
-          <input type="text" name="worker_config_secret" value="" placeholder="<%= client && client.worker_config_secret ? '(unchanged if left blank)' : 'Leave blank to auto-generate on create' %>" class="mono" spellcheck="false" autocapitalize="off" />
-        </div>
-      </div>
+    <div class="field span-2">
+      <label>Slack token — worker (read channel history)</label>
+      <input type="text" name="slack_token" value="" placeholder="<%= client && client.slack_token ? '(unchanged if left blank)' : 'xoxb-...' %>" class="mono" spellcheck="false" autocapitalize="off" />
     </div>
 
     <div class="field">
@@ -74,6 +41,36 @@
     <div class="field">
       <label>HeyReach campaign ID (LinkedIn)</label>
       <input name="heyreach_campaign_id" value="<%= client && client.heyreach_campaign_id ? client.heyreach_campaign_id : '' %>" placeholder="12345" />
+    </div>
+
+    <div class="field">
+      <label>SmartLead API key</label>
+      <input type="text" name="smartlead_api_key" value="" placeholder="<%= client && client.smartlead_api_key ? '(unchanged if left blank)' : '' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field">
+      <label>HeyReach API key</label>
+      <input type="text" name="heyreach_api_key" value="" placeholder="<%= client && client.heyreach_api_key ? '(unchanged if left blank)' : '' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field span-2">
+      <label>Prospeo API key (optional — enrich missing work email)</label>
+      <input type="text" name="prospeo_api_key" value="" placeholder="<%= client && client.prospeo_api_key ? '(unchanged if left blank)' : 'pk_...' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field span-2">
+      <label>Slack bot token — UI (optional — post “visit → first engagement” into the channel)</label>
+      <input type="text" name="slack_bot_token_ui" value="" placeholder="<%= client && client.slack_bot_token_ui ? '(unchanged if left blank)' : 'xoxb-...' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field">
+      <label>Touchpoint ingest secret (optional — auto on create)</label>
+      <input type="text" name="touchpoint_ingest_secret" value="" placeholder="<%= client && client.touchpoint_ingest_secret ? '(unchanged if left blank)' : 'blank = random on create' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field">
+      <label>Worker config secret (optional — auto on create; put same value on Railway worker)</label>
+      <input type="text" name="worker_config_secret" value="" placeholder="<%= client && client.worker_config_secret ? '(unchanged if left blank)' : 'blank = random on create' %>" class="mono" spellcheck="false" autocapitalize="off" />
     </div>
 
     <div class="field span-2">
