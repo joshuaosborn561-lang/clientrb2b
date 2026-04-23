@@ -187,13 +187,14 @@ app.post('/clients', async (req, res) => {
     slack_bot_token_ui,
   } = req.body;
 
-  await pool.query(
+  const { rows: ins } = await pool.query(
     `insert into clients
       (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes, webhook_secret,
        slack_token, prospeo_api_key, smartlead_api_key, heyreach_api_key, slack_bot_token_ui,
        touchpoint_ingest_secret, slack_install_token)
      values ($1,$2,$3,$4,$5,$6, encode(gen_random_bytes(24), 'hex'),
-       $7,$8,$9,$10,$11, encode(gen_random_bytes(24), 'hex'), encode(gen_random_bytes(18), 'hex'))`,
+       $7,$8,$9,$10,$11, encode(gen_random_bytes(24), 'hex'), encode(gen_random_bytes(18), 'hex'))
+     returning id`,
     [
       (name || '').trim(),
       normalizeStatus(status),
@@ -208,7 +209,9 @@ app.post('/clients', async (req, res) => {
       emptyToNull(slack_bot_token_ui),
     ]
   );
-
+  if (ins[0] && ins[0].id) {
+    return res.redirect('/clients/' + ins[0].id);
+  }
   res.redirect('/');
 });
 
