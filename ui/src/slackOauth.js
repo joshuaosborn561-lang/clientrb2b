@@ -1,21 +1,15 @@
 const crypto = require('crypto');
 
-const DEFAULT_SCOPES = [
-  'channels:history',
-  'groups:history',
-  'channels:read',
-  'groups:read',
-  'chat:write',
-].join(',');
+/** Default minimal read access; add chat:write in Slack + SLACK_BOT_SCOPES for UI posts. */
+const DEFAULT_SCOPES = 'channels:history';
 
 function stateSecret() {
   return process.env.SLACK_OAUTH_STATE_SECRET || process.env.SLACK_CLIENT_SECRET || '';
 }
 
 /**
- * Public HTTPS origin for this UI (no trailing slash).
- * Uses UI_PUBLIC_URL first, then Railway-injected public hostname so it matches
- * the URL we register in Slack even if UI_PUBLIC_URL was never set.
+ * Public HTTPS origin (no trailing slash) from env / Railway. Used as fallback
+ * when the incoming HTTP request does not have a public Host header.
  */
 function publicBase() {
   const raw = String(process.env.UI_PUBLIC_URL || '')
@@ -26,10 +20,7 @@ function publicBase() {
     if (!/^\/\//.test(raw)) return 'https://' + raw;
   }
   const h = String(
-    process.env.RAILWAY_PUBLIC_DOMAIN ||
-      process.env.RAILWAY_SERVICE_UI_URL ||
-      process.env.RAILWAY_STATIC_URL ||
-      ''
+    process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_SERVICE_UI_URL || process.env.RAILWAY_STATIC_URL || ''
   )
     .replace(/^https?:\/\//i, '')
     .split('/')[0]
@@ -38,15 +29,42 @@ function publicBase() {
   return '';
 }
 
-function makeState(clientId) {
+/**
+ * Use the request URL so OAuth redirect_uri matches the browser, even if UI_PUBLIC_URL
+ * is missing or wrong (e.g. Railway internal health checks).
+ */
+function publicBaseFromRequest(req) {
+  if (!req) return publicBase();
+  const host = (req.get('x-forwarded-host') || req.get('host') || '')
+    .split(',')[0]
+    .trim();
+  if (!host || host.includes('railway.internal') || host === 'localhost' || /^\[?127\./.test(host)) {
+    return publicBase();
+  }
+  const proto = (req.get('x-forwarded-proto') || req.protocol || 'https')
+    .split(',')[0]
+    .trim() || 'https';
+  return proto + '://' + host;
+}
+
+function makeState(clientId, redirectCallbackUrl) {
   const secret = stateSecret();
   if (!secret) return null;
   const t = Date.now();
-  const payload = Buffer.from(JSON.stringify({ c: String(clientId), t })).toString('base64url');
+  const payload = Buffer.from(
+    JSON.stringify({
+      c: String(clientId),
+      t,
+      u: String(redirectCallbackUrl),
+    })
+  ).toString('base64url');
   const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
   return payload + '.' + sig;
 }
 
+/**
+ * @returns {{ clientId: string, redirectUri: string } | null}
+ */
 function readState(state) {
   if (!state || typeof state !== 'string' || !state.includes('.')) return null;
   const secret = stateSecret();
@@ -62,8 +80,11 @@ function readState(state) {
   } catch {
     return null;
   }
-  if (!o.c || !o.t || Date.now() - o.t > 20 * 60 * 1000) return null;
-  return o.c;
+  if (!o.c || !o.t) return null;
+  if (Date.now() - o.t > 20 * 60 * 1000) return null;
+  const redirectUri = o.u && String(o.u).trim() ? String(o.u).trim() : publicBase() + '/auth/slack/callback';
+  if (!redirectUri || !redirectUri.startsWith('http')) return null;
+  return { clientId: String(o.c), redirectUri };
 }
 
 function slackClientId() {
@@ -74,35 +95,36 @@ function botScopes() {
   return (process.env.SLACK_BOT_SCOPES || DEFAULT_SCOPES).trim();
 }
 
-function buildAuthorizeUrl({ clientId, redirectPath }) {
-  const base = publicBase();
+function buildAuthorizeUrl({ clientId, req, redirectPath }) {
+  const base = publicBaseFromRequest(req);
   if (!base || !slackClientId()) return { error: 'missing_slack_oauth_config' };
-  const state = makeState(clientId);
+  const callback = base + (redirectPath || '/auth/slack/callback');
+  const state = makeState(clientId, callback);
   if (!state) return { error: 'missing_state_secret' };
-  const redir = base + (redirectPath || '/auth/slack/callback');
   const q = new URLSearchParams({
     client_id: slackClientId(),
     scope: botScopes(),
     user_scope: '',
-    redirect_uri: redir,
+    redirect_uri: callback,
     state,
   });
   return { url: 'https://slack.com/oauth/v2/authorize?' + q.toString() };
 }
 
-async function exchangeCode(code) {
+async function exchangeCode(code, redirectUri) {
   const id = (process.env.SLACK_CLIENT_ID || '').trim();
   const sec = (process.env.SLACK_CLIENT_SECRET || '').trim();
-  const base = publicBase();
-  if (!id || !sec || !base) {
-    return { error: { message: 'missing env: SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, UI_PUBLIC_URL' } };
+  if (!id || !sec) {
+    return { error: { message: 'missing env: SLACK_CLIENT_ID, SLACK_CLIENT_SECRET' } };
   }
-  const redirectUri = base + '/auth/slack/callback';
+  if (!redirectUri) {
+    return { error: { message: 'missing redirect_uri' } };
+  }
   const body = new URLSearchParams({
     client_id: id,
     client_secret: sec,
     code: String(code),
-    redirect_uri: redirectUri,
+    redirect_uri: String(redirectUri).trim(),
   });
   const res = await fetch('https://slack.com/api/oauth.v2.access', {
     method: 'POST',
@@ -120,6 +142,7 @@ module.exports = {
   makeState,
   readState,
   publicBase,
+  publicBaseFromRequest,
   buildAuthorizeUrl,
   exchangeCode,
   slackClientId,

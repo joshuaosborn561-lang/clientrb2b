@@ -11,7 +11,7 @@
 </div>
 
 <% if (publicBase) { %>
-  <p class="muted" style="margin:0 0 12px 0;">In your Slack app → <strong>OAuth &amp; Permissions</strong> → <strong>Redirect URLs</strong>, add: <code><%= publicBase %>/auth/slack/callback</code></p>
+  <p class="muted" style="margin:0 0 12px 0;">In your Slack app → <strong>OAuth &amp; Permissions</strong> → <strong>Redirect URLs</strong>, add: <code><%= publicBase %>/auth/slack/callback</code> and save. <strong>Do not</strong> use Slack’s <strong>Install App</strong> button in the API site for this flow — use <strong>Add Slack app to client workspace</strong> here so <code>redirect_uri</code> is set.</p>
 <% } %>
 
 <div class="card">

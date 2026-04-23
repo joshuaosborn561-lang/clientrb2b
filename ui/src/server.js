@@ -4,7 +4,7 @@ const path = require('path');
 const { Pool } = require('pg');
 const { ensureTouchpointSchema, registerTouchpointRoutes } = require('./touchpoints');
 const { registerWorkerConfigRoutes } = require('./workerConfigApi');
-const { readState, buildAuthorizeUrl, exchangeCode, publicBase } = require('./slackOauth');
+const { readState, buildAuthorizeUrl, exchangeCode, publicBase, publicBaseFromRequest } = require('./slackOauth');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -26,7 +26,7 @@ app.use(express.json());
 app.use('/static', express.static(path.join(__dirname, 'public')));
 
 app.use((req, res, next) => {
-  res.locals.publicBase = publicBase();
+  res.locals.publicBase = publicBaseFromRequest(req) || publicBase();
   res.locals.maskSecret = (v) => {
     const s = String(v || '').trim();
     if (!s) return '—';
@@ -101,7 +101,7 @@ function emptyToNull(v) {
 }
 
 function envBlock(client) {
-  const base = publicBase() || (process.env.UI_PUBLIC_URL || 'https://YOUR-UI.railway.app').replace(/\/$/, '');
+  const base = publicBase() || (process.env.UI_PUBLIC_URL || '').replace(/\/$/, '') || 'https://YOUR-UI.railway.app';
   return [
     `# --- Worker v2 Railway env for: ${client.name}`,
     `# Integration keys live in this UI (Postgres); worker pulls them via GET /api/worker-config/:id`,
@@ -132,7 +132,7 @@ app.get('/clients/:id/slack-install', async (req, res) => {
   if (req.params.id === 'new') return res.status(404).send('Not found');
   const { rows } = await pool.query('select id from clients where id = $1', [req.params.id]);
   if (rows.length === 0) return res.status(404).send('Not found');
-  const out = buildAuthorizeUrl({ clientId: req.params.id });
+  const out = buildAuthorizeUrl({ clientId: req.params.id, req });
   if (out.error) {
     return res
       .status(500)
@@ -269,10 +269,12 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 
 /** For debugging Slack OAuth: exact redirect URL this app uses (no secrets). */
 app.get('/health/slack', (req, res) => {
-  const b = publicBase();
+  const b = publicBaseFromRequest(req) || publicBase();
   return res.json({
     ok: true,
     public_base: b || null,
+    from_request: publicBaseFromRequest(req) || null,
+    from_env: publicBase() || null,
     redirect_uri: b ? b + '/auth/slack/callback' : null,
     slack_client_id_set: Boolean(String(process.env.SLACK_CLIENT_ID || '').trim()),
   });
@@ -302,12 +304,11 @@ app.get('/auth/slack/result', (req, res) => {
     missing: {
       h: 'Slack did not send an authorization code',
       m:
-        '<strong>What went wrong</strong> usually one of: (1) the OAuth flow never finished, e.g. the browser was sent to <code>/auth/slack/callback</code> with no <code>code=</code> in the address bar, or (2) Slack re-used an old <code>redirect_uri</code> and it didn’t match what we sent in the install link. <br/><br/>' +
-        'In the Slack app → <strong>OAuth &amp; Permissions</strong> → <strong>Redirect URLs</strong>, the entry must be <em>exactly</em> (copy from <a href="/health/slack"><code>/health/slack</code></a> if needed):<br/>' +
-        '<code style="word-break: break-all;">' +
+        '<strong>Common cause:</strong> using Slack’s <em>“Install to Workspace”</em> in the app dashboard. That can open an install URL with an empty <code>redirect_uri</code> and no <code>code=</code> in the return — use our app’s button instead. <br/><br/>' +
+        '<strong>What to do:</strong> in our UI open a <strong>client</strong> → <strong>Add Slack app to client workspace</strong> (or from the list: <strong>Slack</strong> link), then approve. Do not use Slack’s “Install to Workspace” from <strong>Install App</strong> for this. <br/><br/>' +
+        'In Slack’s app settings → <strong>Redirect URLs</strong>, the URL must be exactly: <br/><code style="word-break: break-all;">' +
         wantRedirect +
-        '</code> <br/><br/>' +
-        'Then use <strong>Add Slack app to client workspace</strong> on a client, approve in Slack, and confirm the return URL in the address bar has <code>code=</code> and <code>state=</code> (do not use “Open in browser” on the callback URL in Slack’s UI to test it).' +
+        '</code> <br/>(or copy from <a href="/health/slack"><code>/health/slack</code></a>).' +
         withClient,
     },
     denied: { h: 'Slack install was cancelled', m: 'You can try again from the client page.' + withClient },
@@ -345,15 +346,16 @@ app.get('/auth/slack/callback', async (req, res) => {
       hasCode: Boolean(code),
       hasState: Boolean(state),
       queryKeys: Object.keys(req.query),
-      publicBase: publicBase(),
+      fromRequest: publicBaseFromRequest(req),
     });
     return res.redirect(slackResultPath(false, 'missing', null));
   }
-  const clientId = readState(String(state));
-  if (!clientId) return res.redirect(slackResultPath(false, 'invalid_state', null));
+  const parsed = readState(String(state));
+  if (!parsed) return res.redirect(slackResultPath(false, 'invalid_state', null));
+  const { clientId, redirectUri } = parsed;
   const { rows } = await pool.query('select id from clients where id = $1', [clientId]);
   if (rows.length === 0) return res.redirect(slackResultPath(false, 'unknown_client', null));
-  const tokenResult = await exchangeCode(code);
+  const tokenResult = await exchangeCode(code, redirectUri);
   if (tokenResult.error) {
     console.error('Slack OAuth exchange', tokenResult.error);
     return res.redirect(slackResultPath(false, 'failed', clientId));
