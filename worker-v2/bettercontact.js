@@ -8,7 +8,10 @@ const BASE = 'https://app.bettercontact.rocks/api/v2';
  */
 async function findWorkEmailBetterContact(lead) {
   const key = (process.env.BETTERCONTACT_API_KEY || '').trim();
-  if (!key) return null;
+  if (!key) {
+    logger.info('BetterContact skipped (no BETTERCONTACT_API_KEY in worker config; set in UI for this client)');
+    return null;
+  }
 
   const companyDomain = lead.companyWebsite
     ? String(lead.companyWebsite).replace(/^https?:\/\//, '').replace(/\/.*$/, '')
@@ -20,9 +23,18 @@ async function findWorkEmailBetterContact(lead) {
     return null;
   }
   if (!lead.company && !companyDomain) {
-    logger.warn('BetterContact enrich skipped: need company or company_domain');
+    logger.info('BetterContact skipped (API needs Company and/or company domain from RB2B; add domain or company in alert if possible)', {
+      hasCompany: false,
+      hasDomain: false,
+    });
     return null;
   }
+
+  logger.info('BetterContact request starting', {
+    hasCompany: !!lead.company,
+    hasDomain: !!companyDomain,
+    hasLinkedin: !!lead.linkedinUrl,
+  });
 
   const row = {
     first_name: lead.firstName,
@@ -57,13 +69,15 @@ async function findWorkEmailBetterContact(lead) {
       logger.error('BetterContact create failed', { status: res.status, body: text?.slice(0, 300) });
       return null;
     }
+    logger.info('BetterContact create OK', { httpStatus: res.status, requestId: created?.id });
     const requestId = created?.id;
     if (!requestId) {
       logger.error('BetterContact no request id in response', { body: text?.slice(0, 200) });
       return null;
     }
 
-    const maxMs = Number(process.env.BETTERCONTACT_POLL_MS || 120000);
+    // Docs: email enrichment often 1–2 min; verification can run longer.
+    const maxMs = Number(process.env.BETTERCONTACT_POLL_MS || 5 * 60 * 1000);
     const stepMs = Number(process.env.BETTERCONTACT_POLL_STEP_MS || 2000);
     const deadline = Date.now() + maxMs;
     let lastStatus = '';
@@ -79,7 +93,7 @@ async function findWorkEmailBetterContact(lead) {
         // ignore
       }
       if (!gr.ok) {
-        logger.warn('BetterContact poll HTTP', { status: gr.status, snippet: gtext?.slice(0, 150) });
+        logger.warn('BetterContact poll not OK', { httpStatus: gr.status, snippet: gtext?.slice(0, 150) });
         await sleep(stepMs);
         continue;
       }
@@ -88,9 +102,15 @@ async function findWorkEmailBetterContact(lead) {
       if (st === 'terminated' || st === 'completed' || st === 'done' || st === 'success') {
         const email = pickEmailFromResult(g);
         if (email) {
-          logger.info('BetterContact email found', { email, status: st });
+          logger.info('BetterContact email found', { email, status: st, httpStatus: gr.status });
         } else {
-          logger.info('BetterContact finished with no email', { status: st, keys: g?.data ? 'has data' : 'no data' });
+          const sum = g?.summary;
+          logger.info('BetterContact poll 200, job finished, no usable email', {
+            status: st,
+            httpStatus: gr.status,
+            summary: sum || null,
+            hasDataRow: !!(g?.data && g.data[0]),
+          });
         }
         return email;
       }
