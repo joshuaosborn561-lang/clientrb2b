@@ -7,6 +7,7 @@ const { postSlackMessage } = require('./slack');
 const { parseRb2bVisitAt } = require('./visitTime');
 const { reportTouchpoint } = require('./ingest');
 const { loadWorkerConfig, applyWorkerConfig } = require('./config');
+const { isUsableWorkEmail } = require('./emailUtils');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
 
@@ -191,11 +192,16 @@ async function main() {
     const visitParsed = parseRb2bVisitAt(lead.visitedAt);
     const visitInstant = visitParsed.at;
 
-    let email = lead.email || null;
+    // RB2B often sends masked emails (****@****); always run Prospeo when we don't have a real address.
+    const rb2bEmailRaw = String(lead.email || '').trim();
+    let email = isUsableWorkEmail(rb2bEmailRaw) ? rb2bEmailRaw : null;
+    let emailSource = email ? 'rb2b' : 'none';
     if (!email) {
       try {
         const companyDomain = lead.companyWebsite ? lead.companyWebsite.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : null;
-        email = await findWorkEmail({ ...lead, companyDomain });
+        const forProspeo = { ...lead, email: null };
+        email = await findWorkEmail({ ...forProspeo, companyDomain });
+        if (email) emailSource = 'prospeo';
       } catch (err) {
         logger.error('Prospeo email enrichment error', { error: err.message, lead: leadName });
       }
@@ -241,6 +247,14 @@ async function main() {
     const lines = [];
     lines.push('*Enrollment complete*');
     lines.push('*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''));
+    lines.push(
+      '*Email source:* ' +
+        (emailSource === 'rb2b'
+          ? 'RB2B alert (real address in text)'
+          : emailSource === 'prospeo'
+            ? 'Prospeo (RB2B was empty/masked; enrichment used)'
+            : 'none — Prospeo could not find an email (or PROSPEO_API_KEY missing)')
+    );
     if (emailKey) {
       const sm =
         smartResult.ok
