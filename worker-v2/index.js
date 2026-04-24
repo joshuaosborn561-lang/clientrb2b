@@ -12,6 +12,12 @@ const { findWorkEmailBetterContact } = require('./bettercontact');
 const { logEnrichmentMiss } = require('./notionEnrichmentLog');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
+/** Set ENRICHMENT_BACKFILL=1 to re-run Prospeo → BetterContact for leads with masked/empty RB2B email only (wider lookback by default). */
+const ENRICHMENT_BACKFILL = /^1|true|yes$/i.test(String(process.env.ENRICHMENT_BACKFILL || '').trim());
+const ENRICHMENT_BACKFILL_LOOKBACK_SECONDS = Number(
+  process.env.ENRICHMENT_BACKFILL_LOOKBACK_SECONDS || 30 * 24 * 60 * 60
+);
+const BACKFILL_LOG_NOTION = /^1|true|yes$/i.test(String(process.env.ENRICHMENT_BACKFILL_LOG_NOTION || '').trim());
 
 // --- ICP filtering (copied defaults from legacy worker) ---
 // Set DISABLE_ICP_FILTER=1 in Railway to route all parsed leads (debug only).
@@ -137,8 +143,14 @@ async function main() {
   applyWorkerConfig(remote);
 
   const channelId = process.env.CHANNEL_ID;
-  const oldest = String(Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS);
-  logger.info('Polling Slack', { oldest, channel: channelId, lookbackSeconds: LOOKBACK_SECONDS });
+  const lookbackSec = ENRICHMENT_BACKFILL ? ENRICHMENT_BACKFILL_LOOKBACK_SECONDS : LOOKBACK_SECONDS;
+  const oldest = String(Math.floor(Date.now() / 1000) - lookbackSec);
+  logger.info('Polling Slack', {
+    oldest,
+    channel: channelId,
+    lookbackSeconds: lookbackSec,
+    enrichmentBackfill: ENRICHMENT_BACKFILL,
+  });
 
   let messages;
   try {
@@ -166,6 +178,13 @@ async function main() {
     if (!lead) {
       parseFailures++;
       continue;
+    }
+
+    if (ENRICHMENT_BACKFILL) {
+      const raw = String(lead.email || '').trim();
+      if (isUsableWorkEmail(raw)) {
+        continue;
+      }
     }
 
     leadsFound++;
@@ -220,10 +239,12 @@ async function main() {
       }
     }
     if (!email) {
-      try {
-        await logEnrichmentMiss(lead, 'prospeo_and_bettercontact_miss');
-      } catch (e) {
-        // ignore
+      if (!ENRICHMENT_BACKFILL || BACKFILL_LOG_NOTION) {
+        try {
+          await logEnrichmentMiss(lead, 'prospeo_and_bettercontact_miss');
+        } catch (e) {
+          // ignore
+        }
       }
     }
 
@@ -265,7 +286,7 @@ async function main() {
     }
 
     const lines = [];
-    lines.push('*Enrollment complete*');
+    lines.push(ENRICHMENT_BACKFILL ? '*Enrichment backfill* (masked RB2B; re-ran Prospeo → BetterContact)' : '*Enrollment complete*');
     lines.push('*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''));
     lines.push(
       '*Email source:* ' +
