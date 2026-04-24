@@ -11,6 +11,8 @@ const { loadWorkerConfig, applyWorkerConfig } = require('./config');
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
 
 // --- ICP filtering (copied defaults from legacy worker) ---
+// Set DISABLE_ICP_FILTER=1 in Railway to route all parsed leads (debug only).
+const ICP_DISABLED = /^1|true|yes$/i.test(String(process.env.DISABLE_ICP_FILTER || '').trim());
 const EXCLUDED_EMPLOYEE_RANGES = ['1-10', '11-50'];
 const EXCLUDED_INDUSTRIES = [
   'food', 'restaurant', 'restaurants', 'dining', 'bakery', 'catering',
@@ -20,6 +22,7 @@ const EXCLUDED_INDUSTRIES = [
 ];
 
 function passesICP(lead) {
+  if (ICP_DISABLED) return { pass: true, reason: null };
   if (EXCLUDED_EMPLOYEE_RANGES.includes(lead.employees)) {
     return { pass: false, reason: 'Employee range too small: ' + lead.employees };
   }
@@ -169,6 +172,17 @@ async function main() {
     if (!icpResult.pass) {
       logger.info('Lead skipped (ICP filter)', { lead: leadName, reason: icpResult.reason });
       skipped++;
+      const skipLines = [
+        '*Visitor skipped (ICP filter)*',
+        '*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''),
+        '*Reason:* ' + icpResult.reason,
+        '_To allow them, adjust EXCLUDED_EMPLOYEE_RANGES / EXCLUDED_INDUSTRIES in worker-v2 or remove the filter._',
+      ];
+      try {
+        await postSlackMessage(skipLines.join('\n'));
+      } catch (e) {
+        // ignore
+      }
       continue;
     }
 
@@ -228,17 +242,18 @@ async function main() {
     lines.push('*Enrollment complete*');
     lines.push('*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''));
     if (emailKey) {
-      lines.push(
-        '*SmartLead (email):* ' +
-          (smartResult.ok ? 'enrolled `' + emailKey + '`' : 'not enrolled (' + (smartResult.reason || 'failed') + ')')
-      );
+      const sm =
+        smartResult.ok
+          ? 'enrolled `' + emailKey + '`' + (smartResult.detail ? ' ' + smartResult.detail : '')
+          : 'not enrolled — *' + (smartResult.reason || 'failed') + '*' + (smartResult.detail ? ' — ' + String(smartResult.detail).slice(0, 400) : '');
+      lines.push('*SmartLead (email):* ' + sm);
     } else {
-      lines.push('*SmartLead (email):* skipped (no email)');
+      lines.push('*SmartLead (email):* skipped (no work email; Prospeo also found nothing or is not set)');
     }
     if (linkedinKey) {
       lines.push(
         '*HeyReach (LinkedIn):* ' +
-          (heyResult.ok ? 'enrolled' : 'not enrolled (' + (heyResult.reason || 'failed') + ')')
+          (heyResult.ok ? 'enrolled' : 'not enrolled — ' + (heyResult.reason || 'failed') + (heyResult.detail ? ' — ' + String(heyResult.detail).slice(0, 200) : ''))
       );
     } else {
       lines.push('*HeyReach (LinkedIn):* skipped (no LinkedIn URL)');

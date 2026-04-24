@@ -33,14 +33,14 @@ async function addToHeyReach(lead) {
       }),
     });
 
+    const bodyText = await res.text();
     if (!res.ok) {
-      const body = await res.text();
-      logger.error('HeyReach API error', { status: res.status, body });
-      return { ok: false, reason: 'http_error', status: res.status };
+      logger.error('HeyReach API error', { status: res.status, body: bodyText?.slice(0, 500) });
+      return { ok: false, reason: 'http_error', status: res.status, detail: bodyText?.slice(0, 200) };
     }
 
     logger.info('Added to HeyReach campaign', { lead: `${lead.firstName} ${lead.lastName}` });
-    return { ok: true };
+    return { ok: true, detail: bodyText?.slice(0, 150) };
   } catch (err) {
     logger.error('HeyReach request failed', { error: err.message, lead: `${lead.firstName} ${lead.lastName}` });
     return { ok: false, reason: 'exception', error: err.message };
