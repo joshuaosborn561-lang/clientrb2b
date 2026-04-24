@@ -8,6 +8,8 @@ const { parseRb2bVisitAt } = require('./visitTime');
 const { reportTouchpoint } = require('./ingest');
 const { loadWorkerConfig, applyWorkerConfig } = require('./config');
 const { isUsableWorkEmail } = require('./emailUtils');
+const { findWorkEmailBetterContact } = require('./bettercontact');
+const { logEnrichmentMiss } = require('./notionEnrichmentLog');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
 
@@ -206,6 +208,24 @@ async function main() {
         logger.error('Prospeo email enrichment error', { error: err.message, lead: leadName });
       }
     }
+    if (!email) {
+      try {
+        const bc = await findWorkEmailBetterContact(lead);
+        if (bc && isUsableWorkEmail(bc)) {
+          email = bc;
+          emailSource = 'bettercontact';
+        }
+      } catch (err) {
+        logger.error('BetterContact error', { error: err.message, lead: leadName });
+      }
+    }
+    if (!email) {
+      try {
+        await logEnrichmentMiss(lead, 'prospeo_and_bettercontact_miss');
+      } catch (e) {
+        // ignore
+      }
+    }
 
     const emailKey = email ? normalizeEmailKey(email) : '';
     const linkedinKey = normalizeLinkedinKey(lead.linkedinUrl);
@@ -252,8 +272,10 @@ async function main() {
         (emailSource === 'rb2b'
           ? 'RB2B alert (real address in text)'
           : emailSource === 'prospeo'
-            ? 'Prospeo (RB2B was empty/masked; enrichment used)'
-            : 'none — Prospeo could not find an email (or PROSPEO_API_KEY missing)')
+            ? 'Prospeo'
+            : emailSource === 'bettercontact'
+              ? 'BetterContact (after Prospeo had no result)'
+              : 'none (Prospeo + BetterContact; Notion log if both miss and Notion is configured)')
     );
     if (emailKey) {
       const sm =

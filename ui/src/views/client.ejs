@@ -30,6 +30,8 @@
     <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
     <div><div class="muted">Slack token (worker)</div><div><%= maskSecret(client.slack_token) %></div></div>
     <div><div class="muted">Prospeo API key</div><div><%= maskSecret(client.prospeo_api_key) %></div></div>
+    <div><div class="muted">BetterContact API key</div><div><%= maskSecret(client.bettercontact_api_key) %></div></div>
+    <div class="span-2"><div class="muted">Notion (enrichment miss log)</div><div>Token: <%= maskSecret(client.notion_api_key) %> &nbsp; DB: <code><%= client.notion_enrichment_db_id || '—' %></code> &nbsp; Title col: <code><%= client.notion_title_property || 'Name' %></code></div></div>
     <div><div class="muted">SmartLead API key</div><div><%= maskSecret(client.smartlead_api_key) %></div></div>
     <div><div class="muted">SmartLead campaign ID</div><div><code><%= client.smartlead_campaign_id || '—' %></code></div></div>
     <div><div class="muted">HeyReach API key</div><div><%= maskSecret(client.heyreach_api_key) %></div></div>

@@ -48,6 +48,11 @@ function applyWorkerConfig(data) {
   if (data.ui_touchpoint_ingest_url) process.env.UI_TOUCHPOINT_INGEST_URL = String(data.ui_touchpoint_ingest_url);
   if (data.ui_touchpoint_ingest_secret)
     process.env.UI_TOUCHPOINT_INGEST_SECRET = String(data.ui_touchpoint_ingest_secret);
+  if (data.bettercontact_api_key) process.env.BETTERCONTACT_API_KEY = String(data.bettercontact_api_key);
+  if (data.notion_api_key) process.env.NOTION_API_KEY = String(data.notion_api_key);
+  if (data.notion_enrichment_db_id)
+    process.env.NOTION_ENRICHMENT_DB_ID = String(data.notion_enrichment_db_id);
+  if (data.notion_title_property) process.env.NOTION_TITLE_PROPERTY = String(data.notion_title_property);
 }
 
 module.exports = { loadWorkerConfig, applyWorkerConfig };

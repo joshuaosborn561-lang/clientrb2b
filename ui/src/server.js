@@ -85,6 +85,10 @@ async function ensureSchema() {
   await pool.query(`alter table clients add column if not exists prospeo_api_key text;`);
   await pool.query(`alter table clients add column if not exists smartlead_api_key text;`);
   await pool.query(`alter table clients add column if not exists heyreach_api_key text;`);
+  await pool.query(`alter table clients add column if not exists bettercontact_api_key text;`);
+  await pool.query(`alter table clients add column if not exists notion_api_key text;`);
+  await pool.query(`alter table clients add column if not exists notion_enrichment_db_id text;`);
+  await pool.query(`alter table clients add column if not exists notion_title_property text;`);
   await pool.query(`alter table clients drop column if exists worker_config_secret;`);
   await pool.query(`alter table clients add column if not exists slack_install_token text;`);
   await pool.query(`create unique index if not exists clients_slack_install_token_key on clients(slack_install_token) where slack_install_token is not null;`);
@@ -182,6 +186,10 @@ app.post('/clients', async (req, res) => {
     notes,
     slack_token,
     prospeo_api_key,
+    bettercontact_api_key,
+    notion_api_key,
+    notion_enrichment_db_id,
+    notion_title_property,
     smartlead_api_key,
     heyreach_api_key,
     slack_bot_token_ui,
@@ -190,10 +198,11 @@ app.post('/clients', async (req, res) => {
   const { rows: ins } = await pool.query(
     `insert into clients
       (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes, webhook_secret,
-       slack_token, prospeo_api_key, smartlead_api_key, heyreach_api_key, slack_bot_token_ui,
+       slack_token, prospeo_api_key, bettercontact_api_key, notion_api_key, notion_enrichment_db_id, notion_title_property,
+       smartlead_api_key, heyreach_api_key, slack_bot_token_ui,
        touchpoint_ingest_secret, slack_install_token)
      values ($1,$2,$3,$4,$5,$6, encode(gen_random_bytes(24), 'hex'),
-       $7,$8,$9,$10,$11, encode(gen_random_bytes(24), 'hex'), encode(gen_random_bytes(18), 'hex'))
+       $7,$8,$9,$10,$11,$12,$13,$14,$15, encode(gen_random_bytes(24), 'hex'), encode(gen_random_bytes(18), 'hex'))
      returning id`,
     [
       (name || '').trim(),
@@ -204,6 +213,10 @@ app.post('/clients', async (req, res) => {
       (notes || '').trim() || null,
       emptyToNull(slack_token),
       emptyToNull(prospeo_api_key),
+      emptyToNull(bettercontact_api_key),
+      emptyToNull(notion_api_key),
+      emptyToNull(notion_enrichment_db_id),
+      emptyToNull(notion_title_property) || 'Name',
       emptyToNull(smartlead_api_key),
       emptyToNull(heyreach_api_key),
       emptyToNull(slack_bot_token_ui),
@@ -245,6 +258,10 @@ app.post('/clients/:id', async (req, res) => {
     notes,
     slack_token,
     prospeo_api_key,
+    bettercontact_api_key,
+    notion_api_key,
+    notion_enrichment_db_id,
+    notion_title_property,
     smartlead_api_key,
     heyreach_api_key,
     slack_bot_token_ui,
@@ -256,6 +273,10 @@ app.post('/clients/:id', async (req, res) => {
 
   const nextSlackToken = emptyToNull(slack_token) != null ? emptyToNull(slack_token) : cur.slack_token;
   const nextProspeo = emptyToNull(prospeo_api_key) != null ? emptyToNull(prospeo_api_key) : cur.prospeo_api_key;
+  const nextBc = emptyToNull(bettercontact_api_key) != null ? emptyToNull(bettercontact_api_key) : cur.bettercontact_api_key;
+  const nextNotion = emptyToNull(notion_api_key) != null ? emptyToNull(notion_api_key) : cur.notion_api_key;
+  const nextNotionDb = emptyToNull(notion_enrichment_db_id) != null ? emptyToNull(notion_enrichment_db_id) : cur.notion_enrichment_db_id;
+  const nextNotionTitle = emptyToNull(notion_title_property) != null ? emptyToNull(notion_title_property) : cur.notion_title_property;
   const nextSl = emptyToNull(smartlead_api_key) != null ? emptyToNull(smartlead_api_key) : cur.smartlead_api_key;
   const nextHr = emptyToNull(heyreach_api_key) != null ? emptyToNull(heyreach_api_key) : cur.heyreach_api_key;
   const nextUiSlack = emptyToNull(slack_bot_token_ui) != null ? emptyToNull(slack_bot_token_ui) : cur.slack_bot_token_ui;
@@ -270,9 +291,13 @@ app.post('/clients/:id', async (req, res) => {
       notes = $7,
       slack_token = $8,
       prospeo_api_key = $9,
-      smartlead_api_key = $10,
-      heyreach_api_key = $11,
-      slack_bot_token_ui = $12
+      bettercontact_api_key = $10,
+      notion_api_key = $11,
+      notion_enrichment_db_id = $12,
+      notion_title_property = $13,
+      smartlead_api_key = $14,
+      heyreach_api_key = $15,
+      slack_bot_token_ui = $16
      where id = $1`,
     [
       req.params.id,
@@ -284,6 +309,10 @@ app.post('/clients/:id', async (req, res) => {
       (notes || '').trim() || null,
       nextSlackToken,
       nextProspeo,
+      nextBc,
+      nextNotion,
+      nextNotionDb,
+      nextNotionTitle || 'Name',
       nextSl,
       nextHr,
       nextUiSlack,

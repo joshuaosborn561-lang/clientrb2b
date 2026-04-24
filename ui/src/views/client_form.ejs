@@ -2,8 +2,7 @@
   <div class="col">
     <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
     <p class="muted">
-      <strong>Required for the worker</strong> (when it loads config from this app): Slack channel ID, Slack token (read RB2B channel), SmartLead key + campaign if you want email, HeyReach key + campaign if you want LinkedIn.
-      <strong>Optional:</strong> Prospeo (find work email when RB2B has none). <strong>For visit → engagement Slack posts:</strong> Slack bot token (UI). Set the same <code>WORKER_CONFIG_SECRET</code> on the UI service and on the worker in Railway (see env block on the client page).
+      <strong>Worker</strong> loads keys from here: Slack, Prospeo, then <strong>BetterContact</strong> if Prospeo finds nothing, SmartLead/HeyReach, optional <strong>Notion</strong> to log when both find no email. Set the same <code>WORKER_CONFIG_SECRET</code> on UI + worker in Railway.
     </p>
   </div>
 </div>
@@ -54,8 +53,26 @@
     </div>
 
     <div class="field span-2">
-      <label>Prospeo API key (optional — enrich missing work email)</label>
+      <label>Prospeo API key (try first when RB2B email is blank/masked)</label>
       <input type="text" name="prospeo_api_key" value="" placeholder="<%= client && client.prospeo_api_key ? '(unchanged if left blank)' : 'pk_...' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field span-2">
+      <label>BetterContact API key (optional — if Prospeo returns nothing; async, may add ~1–2 min per lead)</label>
+      <input type="text" name="bettercontact_api_key" value="" placeholder="<%= client && client.bettercontact_api_key ? '(unchanged if left blank)' : 'X-API-Key' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field">
+      <label>Notion integration token (optional — log when Prospeo + BetterContact find no email)</label>
+      <input type="text" name="notion_api_key" value="" placeholder="<%= client && client.notion_api_key ? '(unchanged if left blank)' : 'secret_...' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+    <div class="field">
+      <label>Notion database ID (page with “Connect to” → use database ID from URL)</label>
+      <input type="text" name="notion_enrichment_db_id" value="<%= client && client.notion_enrichment_db_id ? client.notion_enrichment_db_id : '' %>" placeholder="32-char id with or without hyphens" class="mono" spellcheck="false" />
+    </div>
+    <div class="field span-2">
+      <label>Notion title property name (must match your database’s title column, default “Name”)</label>
+      <input type="text" name="notion_title_property" value="<%= client && client.notion_title_property ? client.notion_title_property : 'Name' %>" placeholder="Name" class="mono" />
     </div>
 
     <div class="field span-2">
