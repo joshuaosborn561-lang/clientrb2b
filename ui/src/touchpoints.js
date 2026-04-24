@@ -2,10 +2,6 @@ const express = require('express');
 
 const jsonParser = express.json({ limit: '2mb', type: '*/*' });
 
-function randomSecret() {
-  return crypto.randomBytes(24).toString('hex');
-}
-
 async function ensureTouchpointSchema(pool) {
   await pool.query(`
     alter table clients add column if not exists webhook_secret text;
@@ -14,6 +10,18 @@ async function ensureTouchpointSchema(pool) {
     update clients
     set webhook_secret = encode(gen_random_bytes(24), 'hex')
     where webhook_secret is null or webhook_secret = '';
+  `);
+
+  await pool.query(`
+    alter table clients add column if not exists touchpoint_ingest_secret text;
+  `);
+  await pool.query(`
+    alter table clients add column if not exists slack_bot_token_ui text;
+  `);
+  await pool.query(`
+    update clients
+    set touchpoint_ingest_secret = encode(gen_random_bytes(24), 'hex')
+    where touchpoint_ingest_secret is null or touchpoint_ingest_secret = '';
   `);
 
   await pool.query(`
@@ -50,16 +58,22 @@ async function ensureTouchpointSchema(pool) {
   `);
 }
 
-function ingestSecret() {
-  return process.env.UI_TOUCHPOINT_INGEST_SECRET;
+function ingestSecretGlobal() {
+  return process.env.UI_TOUCHPOINT_INGEST_SECRET || '';
 }
 
-function slackToken() {
+function resolveIngestSecretForClient(client) {
+  const fromRow = client && String(client.touchpoint_ingest_secret || '').trim();
+  if (fromRow) return fromRow;
+  return String(ingestSecretGlobal() || '').trim();
+}
+
+function slackTokenDefault() {
   return process.env.SLACK_BOT_TOKEN || process.env.SLACK_TOKEN || '';
 }
 
-async function slackPostMessage(channelId, text) {
-  const token = slackToken();
+async function slackPostMessage(channelId, text, tokenOverride) {
+  const token = String(tokenOverride || '').trim() || slackTokenDefault();
   if (!token || !channelId) return { ok: false, error: 'missing_slack' };
   const res = await fetch('https://slack.com/api/chat.postMessage', {
     method: 'POST',
@@ -195,6 +209,12 @@ async function handleIngestReport(pool, body) {
   return { status: 200, json: { ok: true } };
 }
 
+function slackTokenForClient(client) {
+  const t = client && String(client.slack_bot_token_ui || '').trim();
+  if (t) return t;
+  return slackTokenDefault();
+}
+
 async function maybeNotifyFirstEngagement(pool, client, row, engagementLabel, at) {
   const visit = row.visit_instant ? new Date(row.visit_instant) : null;
   const parts = ['*' + engagementLabel + '*', 'Lead: `' + row.lead_key + '`'];
@@ -206,7 +226,7 @@ async function maybeNotifyFirstEngagement(pool, client, row, engagementLabel, at
   } else {
     parts.push('No visit timestamp in RB2B alert; engagement at `' + at.toISOString() + '`');
   }
-  await slackPostMessage(client.slack_channel_id, parts.join('\n'));
+  await slackPostMessage(client.slack_channel_id, parts.join('\n'), slackTokenForClient(client));
 }
 
 async function handleSmartLeadWebhook(pool, clientId, secret, reqBody) {
@@ -295,11 +315,25 @@ async function handleHeyreachWebhook(pool, clientId, secret, reqBody) {
 function registerTouchpointRoutes(app, pool) {
   app.post('/api/touchpoints/report', jsonParser, async (req, res) => {
     const auth = req.headers.authorization || '';
-    const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
-    if (!ingestSecret() || token !== ingestSecret()) {
-      return res.status(401).json({ ok: false });
+    const token = String(auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '').trim();
+    const body = req.body || {};
+    const clientExternal = String(body.client_external_id || '').trim();
+    if (!clientExternal) {
+      return res.status(400).json({ ok: false, error: 'missing_client_external_id' });
     }
-    const out = await handleIngestReport(pool, req.body || {});
+
+    const { rows } = await pool.query('select * from clients where slack_channel_id = $1 limit 1', [clientExternal]);
+    const client = rows[0] || null;
+    if (!client) {
+      return res.status(404).json({ ok: false, error: 'client_not_found' });
+    }
+
+    const expected = resolveIngestSecretForClient(client);
+    if (!expected || token !== expected) {
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+
+    const out = await handleIngestReport(pool, body);
     return res.status(out.status).json(out.json);
   });
 

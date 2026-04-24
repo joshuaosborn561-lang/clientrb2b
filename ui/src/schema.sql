@@ -10,6 +10,18 @@ create table if not exists clients (
   heyreach_campaign_id text,
   smartlead_campaign_id text,
   notes text,
+  webhook_secret text,
+  slack_token text,
+  prospeo_api_key text,
+  bettercontact_api_key text,
+  notion_api_key text,
+  notion_enrichment_db_id text,
+  notion_title_property text,
+  smartlead_api_key text,
+  heyreach_api_key text,
+  slack_bot_token_ui text,
+  touchpoint_ingest_secret text,
+  slack_install_token text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

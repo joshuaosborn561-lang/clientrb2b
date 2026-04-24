@@ -1,12 +1,11 @@
 const logger = require('./logger');
 
-const PROSPEO_API_KEY = process.env.PROSPEO_API_KEY;
-
 /**
  * Find work email when RB2B alert has none.
  * Uses Prospeo Enrich Person: https://prospeo.io/api-docs/enrich-person
  */
 async function findWorkEmail(lead) {
+  const PROSPEO_API_KEY = process.env.PROSPEO_API_KEY;
   if (!PROSPEO_API_KEY) return null;
 
   const data = {};

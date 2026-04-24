@@ -1,9 +1,8 @@
 const logger = require('./logger');
 
-const UI_TOUCHPOINT_INGEST_URL = process.env.UI_TOUCHPOINT_INGEST_URL;
-const UI_TOUCHPOINT_INGEST_SECRET = process.env.UI_TOUCHPOINT_INGEST_SECRET;
-
 async function reportTouchpoint(payload) {
+  const UI_TOUCHPOINT_INGEST_URL = process.env.UI_TOUCHPOINT_INGEST_URL;
+  const UI_TOUCHPOINT_INGEST_SECRET = process.env.UI_TOUCHPOINT_INGEST_SECRET;
   if (!UI_TOUCHPOINT_INGEST_URL || !UI_TOUCHPOINT_INGEST_SECRET) {
     return;
   }

@@ -4,19 +4,40 @@
     <div class="muted">ID: <code><%= client.id %></code></div>
   </div>
   <div class="row">
+    <a class="btn" href="/clients/<%= client.id %>/slack-install">Add Slack (you)</a>
     <a class="btn" href="/clients/<%= client.id %>/edit">Edit</a>
     <a class="btn" href="/">Back</a>
   </div>
 </div>
+
+<% if (publicBase) { %>
+  <p class="muted" style="margin:0 0 8px 0;">In your Slack app → <strong>OAuth &amp; Permissions</strong> → <strong>Redirect URLs</strong>, add: <code><%= publicBase %>/auth/slack/callback</code> and save. <strong>Do not</strong> use Slack’s <strong>Install App</strong> in the API site (empty <code>redirect_uri</code>).</p>
+  <% if (typeof shareInstallUrl !== 'undefined' && shareInstallUrl) { %>
+  <div class="card" style="margin:0 0 14px 0;padding:14px;border:1px solid rgba(110,168,254,0.25);">
+    <h4 style="margin:0 0 8px 0;">Link for the customer to install the app in their workspace</h4>
+    <p class="muted" style="margin:0 0 8px 0;">Opening this link starts OAuth for <strong>this</strong> client only (the long secret in the path is tied to this client). Send it to someone who can click <strong>Allow</strong> in their Slack. Not for posting publicly.</p>
+    <p style="margin:0;word-break:break-all;"><a href="<%= shareInstallUrl %>"><%= shareInstallUrl %></a></p>
+    <p style="margin:8px 0 0 0;"><button class="btn" type="button" id="cpyInstall">Copy link</button></p>
+    <script>document.getElementById("cpyInstall").addEventListener("click",()=>{navigator.clipboard.writeText(<%= JSON.stringify(shareInstallUrl) %>).catch(()=>{});});</script>
+  </div>
+  <% } %>
+<% } %>
 
 <div class="card">
   <h3 style="margin-top: 0;">Config</h3>
   <div class="grid">
     <div><div class="muted">Slack Channel ID</div><div><code><%= client.slack_channel_id || '' %></code></div></div>
     <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
-    <div><div class="muted">HeyReach Campaign ID (LinkedIn)</div><div><code><%= client.heyreach_campaign_id || '' %></code></div></div>
-    <div><div class="muted">SmartLead Campaign ID (email)</div><div><code><%= client.smartlead_campaign_id || '' %></code></div></div>
-    <div class="span-2"><div class="muted">Webhook secret (per client)</div><div><code><%= client.webhook_secret || '' %></code></div></div>
+    <div><div class="muted">Slack token (worker)</div><div><%= maskSecret(client.slack_token) %></div></div>
+    <div><div class="muted">Prospeo API key</div><div><%= maskSecret(client.prospeo_api_key) %></div></div>
+    <div><div class="muted">BetterContact API key</div><div><%= maskSecret(client.bettercontact_api_key) %></div></div>
+    <div class="span-2"><div class="muted">Notion (enrichment miss log)</div><div>Token: <%= maskSecret(client.notion_api_key) %> &nbsp; DB: <code><%= client.notion_enrichment_db_id || '—' %></code> &nbsp; Title col: <code><%= client.notion_title_property || 'Name' %></code></div></div>
+    <div><div class="muted">SmartLead API key</div><div><%= maskSecret(client.smartlead_api_key) %></div></div>
+    <div><div class="muted">SmartLead campaign ID</div><div><code><%= client.smartlead_campaign_id || '—' %></code></div></div>
+    <div><div class="muted">HeyReach API key</div><div><%= maskSecret(client.heyreach_api_key) %></div></div>
+    <div><div class="muted">HeyReach campaign ID</div><div><code><%= client.heyreach_campaign_id || '—' %></code></div></div>
+    <div><div class="muted">Slack bot token (UI posts)</div><div><%= maskSecret(client.slack_bot_token_ui) %></div></div>
+    <div class="span-2"><div class="muted">Webhook secret (SmartLead / HeyReach URLs)</div><div><code><%= client.webhook_secret || '' %></code></div></div>
   </div>
 
   <% const hookBase = (typeof publicBase !== 'undefined' && publicBase) ? publicBase : ''; %>
@@ -43,11 +64,11 @@
 
 <div class="card">
   <div class="row" style="justify-content: space-between; align-items: center;">
-    <h3 style="margin: 0;">Railway env block (worker-v2)</h3>
+    <h3 style="margin: 0;">Railway env (worker-v2)</h3>
     <button class="btn" type="button" onclick="copyEnv()">Copy</button>
   </div>
-  <p class="muted" style="margin-top: 8px;">Paste this into the Railway service you deploy from <code>worker-v2/</code>. Do not paste into the legacy worker.</p>
-  <textarea id="envBlock" spellcheck="false" style="width: 100%; min-height: 220px; background: #0b1020; color: #e7ecff; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"><%= envBlock %></textarea>
+  <p class="muted" style="margin-top: 8px;">Deploy from <code>worker-v2/</code>. Set these variables on the worker; also set <code>WORKER_CONFIG_SECRET</code> on the <strong>UI</strong> service to the same value so the worker can call the config API.</p>
+  <textarea id="envBlock" spellcheck="false" style="width: 100%; min-height: 180px; background: #0b1020; color: #e7ecff; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"><%= envBlock %></textarea>
 </div>
 
 <dialog id="onboardModal" style="max-width: 880px; width: 92vw; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; background: #0b1020; color: #e7ecff; padding: 0;">
@@ -66,40 +87,32 @@
       <li>In Slack, copy the channel ID (looks like <code>C0123ABCDEF</code>) and paste it into this client record.</li>
     </ul>
 
-    <h4>2) Slack token</h4>
+    <h4>2) Secrets in this UI</h4>
     <ul>
-      <li>Create or reuse a Slack app/bot that can read the alert channel history.</li>
-      <li>Grant the bot scopes needed for <code>conversations.history</code> (and whatever Slack requires to read that channel).</li>
-      <li>Put the bot token into Railway as <code>SLACK_TOKEN</code> for the worker-v2 service.</li>
+      <li><strong>Slack token (worker)</strong>: bot token with access to read the RB2B alert channel (<code>conversations.history</code>).</li>
+      <li><strong>Slack bot token (UI)</strong>: token used by this app to <code>chat.postMessage</code> visit → engagement timing into the same channel.</li>
+      <li><strong>Prospeo</strong>, <strong>SmartLead</strong>, and <strong>HeyReach</strong> keys and campaign IDs are stored here and fetched by the worker at runtime.</li>
+      <li>Set the same <code>WORKER_CONFIG_SECRET</code> on the UI service and the worker; the worker uses it to call <code>GET /api/worker-config/:clientId</code> and receives the touchpoint ingest secret for enrollments.</li>
     </ul>
 
     <h4>3) Prospeo (email when RB2B has none)</h4>
     <ul>
-      <li>Add <code>PROSPEO_API_KEY</code> to the worker (Prospeo dashboard → API key; sent as <code>X-KEY</code>).</li>
       <li>Worker calls <code>POST https://api.prospeo.io/enrich-person</code> with <code>only_verified_email: true</code> (LinkedIn URL if present, else name + company website/name).</li>
     </ul>
 
-    <h4>4) SmartLead + HeyReach</h4>
+    <h4>4) Deploy worker-v2 on Railway</h4>
     <ul>
-      <li><strong>SmartLead</strong>: set <code>SMARTLEAD_CAMPAIGN_ID</code> and <code>SMARTLEAD_API_KEY</code> in Railway (email path).</li>
-      <li><strong>HeyReach</strong>: set <code>HEYREACH_CAMPAIGN_ID</code> and <code>HEYREACH_API_KEY</code> (LinkedIn path; requires LinkedIn URL on the lead).</li>
+      <li>Create a service from the <code>worker-v2/</code> folder.</li>
+      <li>Set <code>WORKER_CLIENT_ID</code> to this client’s UUID, <code>UI_PUBLIC_URL</code> to the UI URL, and <code>WORKER_CONFIG_SECRET</code> to match the UI service.</li>
+      <li>Set the cron schedule (for example every 15 minutes) and command <code>node index.js</code>.</li>
+      <li>Leave the legacy worker alone (it stays running for your current client).</li>
     </ul>
 
     <h4>5) Visit → first engagement (webhooks)</h4>
     <ul>
-      <li>Set <code>UI_PUBLIC_URL</code> on the UI service to your public UI URL (so this page can show full webhook URLs).</li>
-      <li>Set the same <code>UI_TOUCHPOINT_INGEST_SECRET</code> on both the <strong>UI</strong> and each client’s <strong>worker-v2</strong> service.</li>
-      <li>Add <code>SLACK_BOT_TOKEN</code> on the UI service (must be able to <code>chat.postMessage</code> into each client’s RB2B Slack channel).</li>
-      <li>In <strong>SmartLead</strong>, create a webhook pointing at the SmartLead URL on this client page; enable at least <code>EMAIL_SENT</code> (or opens/clicks/replies if you prefer).</li>
-      <li>In <strong>HeyReach</strong>, create a webhook for message / connection events pointing at the HeyReach URL on this client page (payload should include a LinkedIn profile URL).</li>
-    </ul>
-
-    <h4>6) Deploy worker-v2 on Railway</h4>
-    <ul>
-      <li>Deploy a new Railway service using the <code>worker-v2/</code> folder.</li>
-      <li>Set the cron schedule (example every 15 minutes) and command <code>node index.js</code>.</li>
-      <li>Paste the env block from this page into the service variables.</li>
-      <li>Leave the legacy service alone (it stays running for your current client).</li>
+      <li>Set <code>UI_PUBLIC_URL</code> on the UI service so this page shows full webhook URLs.</li>
+      <li>In <strong>SmartLead</strong>, point a webhook at the SmartLead URL on this page.</li>
+      <li>In <strong>HeyReach</strong>, point a webhook at the HeyReach URL (payload should include a LinkedIn profile URL).</li>
     </ul>
   </div>
 </dialog>

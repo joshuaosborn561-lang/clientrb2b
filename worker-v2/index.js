@@ -6,13 +6,22 @@ const { addToSmartLead } = require('./smartlead');
 const { postSlackMessage } = require('./slack');
 const { parseRb2bVisitAt } = require('./visitTime');
 const { reportTouchpoint } = require('./ingest');
-
-const SLACK_TOKEN = process.env.SLACK_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
+const { loadWorkerConfig, applyWorkerConfig } = require('./config');
+const { isUsableWorkEmail } = require('./emailUtils');
+const { findWorkEmailBetterContact } = require('./bettercontact');
+const { logEnrichmentMiss } = require('./notionEnrichmentLog');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
+/** Set ENRICHMENT_BACKFILL=1 to re-run Prospeo → BetterContact for leads with masked/empty RB2B email only (wider lookback by default). */
+const ENRICHMENT_BACKFILL = /^1|true|yes$/i.test(String(process.env.ENRICHMENT_BACKFILL || '').trim());
+const ENRICHMENT_BACKFILL_LOOKBACK_SECONDS = Number(
+  process.env.ENRICHMENT_BACKFILL_LOOKBACK_SECONDS || 30 * 24 * 60 * 60
+);
+const BACKFILL_LOG_NOTION = /^1|true|yes$/i.test(String(process.env.ENRICHMENT_BACKFILL_LOG_NOTION || '').trim());
 
 // --- ICP filtering (copied defaults from legacy worker) ---
+// Set DISABLE_ICP_FILTER=1 in Railway to route all parsed leads (debug only).
+const ICP_DISABLED = /^1|true|yes$/i.test(String(process.env.DISABLE_ICP_FILTER || '').trim());
 const EXCLUDED_EMPLOYEE_RANGES = ['1-10', '11-50'];
 const EXCLUDED_INDUSTRIES = [
   'food', 'restaurant', 'restaurants', 'dining', 'bakery', 'catering',
@@ -22,6 +31,7 @@ const EXCLUDED_INDUSTRIES = [
 ];
 
 function passesICP(lead) {
+  if (ICP_DISABLED) return { pass: true, reason: null };
   if (EXCLUDED_EMPLOYEE_RANGES.includes(lead.employees)) {
     return { pass: false, reason: 'Employee range too small: ' + lead.employees };
   }
@@ -100,16 +110,18 @@ function extractLead(msg) {
 }
 
 async function fetchAllSlackMessages(oldest) {
-  if (!SLACK_TOKEN || !CHANNEL_ID) {
+  const slackToken = process.env.SLACK_TOKEN;
+  const channelId = process.env.CHANNEL_ID;
+  if (!slackToken || !channelId) {
     throw new Error('SLACK_TOKEN and CHANNEL_ID env vars are required');
   }
   let allMessages = [];
   let cursor;
   while (true) {
-    const params = new URLSearchParams({ channel: CHANNEL_ID, oldest, limit: '200' });
+    const params = new URLSearchParams({ channel: channelId, oldest, limit: '200' });
     if (cursor) params.set('cursor', cursor);
     const res = await fetch('https://slack.com/api/conversations.history?' + params, {
-      headers: { Authorization: 'Bearer ' + SLACK_TOKEN },
+      headers: { Authorization: 'Bearer ' + slackToken },
     });
     if (!res.ok) throw new Error('Slack HTTP error: ' + res.status);
     const data = await res.json();
@@ -127,8 +139,18 @@ async function fetchAllSlackMessages(oldest) {
 async function main() {
   logger.info('RB2B lead router v2 starting');
 
-  const oldest = String(Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS);
-  logger.info('Polling Slack', { oldest, channel: CHANNEL_ID, lookbackSeconds: LOOKBACK_SECONDS });
+  const remote = await loadWorkerConfig();
+  applyWorkerConfig(remote);
+
+  const channelId = process.env.CHANNEL_ID;
+  const lookbackSec = ENRICHMENT_BACKFILL ? ENRICHMENT_BACKFILL_LOOKBACK_SECONDS : LOOKBACK_SECONDS;
+  const oldest = String(Math.floor(Date.now() / 1000) - lookbackSec);
+  logger.info('Polling Slack', {
+    oldest,
+    channel: channelId,
+    lookbackSeconds: lookbackSec,
+    enrichmentBackfill: ENRICHMENT_BACKFILL,
+  });
 
   let messages;
   try {
@@ -158,6 +180,13 @@ async function main() {
       continue;
     }
 
+    if (ENRICHMENT_BACKFILL) {
+      const raw = String(lead.email || '').trim();
+      if (isUsableWorkEmail(raw)) {
+        continue;
+      }
+    }
+
     leadsFound++;
     const leadName = lead.firstName + ' ' + lead.lastName;
 
@@ -165,6 +194,17 @@ async function main() {
     if (!icpResult.pass) {
       logger.info('Lead skipped (ICP filter)', { lead: leadName, reason: icpResult.reason });
       skipped++;
+      const skipLines = [
+        '*Visitor skipped (ICP filter)*',
+        '*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''),
+        '*Reason:* ' + icpResult.reason,
+        '_To allow them, adjust EXCLUDED_EMPLOYEE_RANGES / EXCLUDED_INDUSTRIES in worker-v2 or remove the filter._',
+      ];
+      try {
+        await postSlackMessage(skipLines.join('\n'));
+      } catch (e) {
+        // ignore
+      }
       continue;
     }
 
@@ -173,13 +213,38 @@ async function main() {
     const visitParsed = parseRb2bVisitAt(lead.visitedAt);
     const visitInstant = visitParsed.at;
 
-    let email = lead.email || null;
+    // RB2B often sends masked emails (****@****); always run Prospeo when we don't have a real address.
+    const rb2bEmailRaw = String(lead.email || '').trim();
+    let email = isUsableWorkEmail(rb2bEmailRaw) ? rb2bEmailRaw : null;
+    let emailSource = email ? 'rb2b' : 'none';
     if (!email) {
       try {
         const companyDomain = lead.companyWebsite ? lead.companyWebsite.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : null;
-        email = await findWorkEmail({ ...lead, companyDomain });
+        const forProspeo = { ...lead, email: null };
+        email = await findWorkEmail({ ...forProspeo, companyDomain });
+        if (email) emailSource = 'prospeo';
       } catch (err) {
         logger.error('Prospeo email enrichment error', { error: err.message, lead: leadName });
+      }
+    }
+    if (!email) {
+      try {
+        const bc = await findWorkEmailBetterContact(lead);
+        if (bc && isUsableWorkEmail(bc)) {
+          email = bc;
+          emailSource = 'bettercontact';
+        }
+      } catch (err) {
+        logger.error('BetterContact error', { error: err.message, lead: leadName });
+      }
+    }
+    if (!email) {
+      if (!ENRICHMENT_BACKFILL || BACKFILL_LOG_NOTION) {
+        try {
+          await logEnrichmentMiss(lead, 'prospeo_and_bettercontact_miss');
+        } catch (e) {
+          // ignore
+        }
       }
     }
 
@@ -195,7 +260,7 @@ async function main() {
       if (smartResult.ok) {
         routedSmartLead++;
         await reportTouchpoint({
-          client_external_id: CHANNEL_ID,
+          client_external_id: channelId,
           lead_key: emailKey,
           type: 'enrolled_smartlead',
           slack_message_ts: slackTs,
@@ -210,7 +275,7 @@ async function main() {
       if (heyResult.ok) {
         routedHeyReach++;
         await reportTouchpoint({
-          client_external_id: CHANNEL_ID,
+          client_external_id: channelId,
           lead_key: linkedinKey,
           type: 'enrolled_heyreach',
           slack_message_ts: slackTs,
@@ -221,20 +286,31 @@ async function main() {
     }
 
     const lines = [];
-    lines.push('*Enrollment complete*');
+    lines.push(ENRICHMENT_BACKFILL ? '*Enrichment backfill* (masked RB2B; re-ran Prospeo → BetterContact)' : '*Enrollment complete*');
     lines.push('*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''));
+    lines.push(
+      '*Email source:* ' +
+        (emailSource === 'rb2b'
+          ? 'RB2B alert (real address in text)'
+          : emailSource === 'prospeo'
+            ? 'Prospeo'
+            : emailSource === 'bettercontact'
+              ? 'BetterContact (after Prospeo had no result)'
+              : 'none (Prospeo + BetterContact; Notion log if both miss and Notion is configured)')
+    );
     if (emailKey) {
-      lines.push(
-        '*SmartLead (email):* ' +
-          (smartResult.ok ? 'enrolled `' + emailKey + '`' : 'not enrolled (' + (smartResult.reason || 'failed') + ')')
-      );
+      const sm =
+        smartResult.ok
+          ? 'enrolled `' + emailKey + '`' + (smartResult.detail ? ' ' + smartResult.detail : '')
+          : 'not enrolled — *' + (smartResult.reason || 'failed') + '*' + (smartResult.detail ? ' — ' + String(smartResult.detail).slice(0, 400) : '');
+      lines.push('*SmartLead (email):* ' + sm);
     } else {
-      lines.push('*SmartLead (email):* skipped (no email)');
+      lines.push('*SmartLead (email):* skipped (no work email; Prospeo also found nothing or is not set)');
     }
     if (linkedinKey) {
       lines.push(
         '*HeyReach (LinkedIn):* ' +
-          (heyResult.ok ? 'enrolled' : 'not enrolled (' + (heyResult.reason || 'failed') + ')')
+          (heyResult.ok ? 'enrolled' : 'not enrolled — ' + (heyResult.reason || 'failed') + (heyResult.detail ? ' — ' + String(heyResult.detail).slice(0, 200) : ''))
       );
     } else {
       lines.push('*HeyReach (LinkedIn):* skipped (no LinkedIn URL)');

@@ -1,15 +1,17 @@
 <div class="row">
   <div class="col">
     <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
-    <p class="muted">This UI only stores client metadata and campaign IDs. Secrets live in Railway env vars.</p>
+    <p class="muted">
+      <strong>Worker</strong> loads keys from here: Slack, Prospeo, then <strong>BetterContact</strong> if Prospeo finds nothing, SmartLead/HeyReach, optional <strong>Notion</strong> to log when both find no email. Set the same <code>WORKER_CONFIG_SECRET</code> on UI + worker in Railway.
+    </p>
   </div>
 </div>
 
-<form method="post" action="<%= mode === 'new' ? '/clients' : '/clients/' + client.id %>" class="card">
+<form method="post" action="<%= mode === 'new' ? '/clients' : '/clients/' + client.id %>" class="card" autocomplete="off">
   <div class="grid">
     <div class="field">
       <label>Name</label>
-      <input name="name" required value="<%= client ? client.name : '' %>" placeholder="Acme Inc" />
+      <input name="name" required value="<%= client ? client.name : '' %>" placeholder="Acme Inc" autocomplete="organization" />
     </div>
 
     <div class="field">
@@ -20,9 +22,19 @@
       </select>
     </div>
 
+    <div class="field span-2">
+      <label>Slack channel ID (RB2B alerts)</label>
+      <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" class="mono" spellcheck="false" />
+    </div>
+
+    <div class="field span-2">
+      <label>Slack token — worker (read channel history)</label>
+      <input type="text" name="slack_token" value="" placeholder="<%= client && client.slack_token ? '(unchanged if left blank)' : 'xoxb-...' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
     <div class="field">
-      <label>Slack channel ID</label>
-      <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" />
+      <label>SmartLead campaign ID (email)</label>
+      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" />
     </div>
 
     <div class="field">
@@ -31,8 +43,41 @@
     </div>
 
     <div class="field">
-      <label>SmartLead campaign ID (email)</label>
-      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" />
+      <label>SmartLead API key</label>
+      <input type="text" name="smartlead_api_key" value="" placeholder="<%= client && client.smartlead_api_key ? '(unchanged if left blank)' : '' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field">
+      <label>HeyReach API key</label>
+      <input type="text" name="heyreach_api_key" value="" placeholder="<%= client && client.heyreach_api_key ? '(unchanged if left blank)' : '' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field span-2">
+      <label>Prospeo API key (try first when RB2B email is blank/masked)</label>
+      <input type="text" name="prospeo_api_key" value="" placeholder="<%= client && client.prospeo_api_key ? '(unchanged if left blank)' : 'pk_...' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field span-2">
+      <label>BetterContact API key (optional — if Prospeo returns nothing; async, may add ~1–2 min per lead)</label>
+      <input type="text" name="bettercontact_api_key" value="" placeholder="<%= client && client.bettercontact_api_key ? '(unchanged if left blank)' : 'X-API-Key' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field">
+      <label>Notion integration token (optional — log when Prospeo + BetterContact find no email)</label>
+      <input type="text" name="notion_api_key" value="" placeholder="<%= client && client.notion_api_key ? '(unchanged if left blank)' : 'secret_...' %>" class="mono" spellcheck="false" autocapitalize="off" />
+    </div>
+    <div class="field">
+      <label>Notion database ID (page with “Connect to” → use database ID from URL)</label>
+      <input type="text" name="notion_enrichment_db_id" value="<%= client && client.notion_enrichment_db_id ? client.notion_enrichment_db_id : '' %>" placeholder="32-char id with or without hyphens" class="mono" spellcheck="false" />
+    </div>
+    <div class="field span-2">
+      <label>Notion title property name (must match your database’s title column, default “Name”)</label>
+      <input type="text" name="notion_title_property" value="<%= client && client.notion_title_property ? client.notion_title_property : 'Name' %>" placeholder="Name" class="mono" />
+    </div>
+
+    <div class="field span-2">
+      <label>Slack bot token — UI (optional — post “visit → first engagement” into the channel)</label>
+      <input type="text" name="slack_bot_token_ui" value="" placeholder="<%= client && client.slack_bot_token_ui ? '(unchanged if left blank)' : 'xoxb-...' %>" class="mono" spellcheck="false" autocapitalize="off" />
     </div>
 
     <div class="field span-2">

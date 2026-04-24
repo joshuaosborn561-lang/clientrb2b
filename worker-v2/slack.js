@@ -1,9 +1,8 @@
 const logger = require('./logger');
 
-const SLACK_TOKEN = process.env.SLACK_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-
 async function postSlackMessage(text) {
+  const SLACK_TOKEN = process.env.SLACK_TOKEN;
+  const CHANNEL_ID = process.env.CHANNEL_ID;
   if (!SLACK_TOKEN || !CHANNEL_ID) {
     logger.warn('Slack post skipped: SLACK_TOKEN or CHANNEL_ID missing');
     return false;
