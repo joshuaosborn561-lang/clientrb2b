@@ -67,7 +67,12 @@ async function addToSmartLead(lead, email) {
       return { ok: false, reason: 'empty_response' };
     }
 
-    const added = data.added_count != null ? Number(data.added_count) : null;
+    const added =
+      data.added_count != null
+        ? Number(data.added_count)
+        : Array.isArray(data.lead_ids) && data.lead_ids.length
+          ? data.lead_ids.length
+          : null;
     const skipped = data.skipped_count != null ? Number(data.skipped_count) : 0;
     if (added === 0) {
       const summary = summarizeSmartLeadBody(data);
@@ -75,13 +80,22 @@ async function addToSmartLead(lead, email) {
       return { ok: false, reason: skipped > 0 ? 'skipped' : 'zero_added', data, detail: summary };
     }
 
+    const detail =
+      data.added_count != null
+        ? 'added=' + data.added_count
+        : Array.isArray(data.lead_ids) && data.lead_ids.length
+          ? 'imported (lead_ids=' + data.lead_ids.length + ')'
+          : data.message
+            ? String(data.message).slice(0, 80)
+            : 'imported';
+
     logger.info('Added to SmartLead campaign', {
       lead: `${lead.firstName} ${lead.lastName}`,
       email,
       added_count: data?.added_count,
       lead_ids: data?.lead_ids,
     });
-    return { ok: true, data, detail: 'added=' + added };
+    return { ok: true, data, detail };
   } catch (err) {
     logger.error('SmartLead request failed', { error: err.message, lead: `${lead.firstName} ${lead.lastName}` });
     return { ok: false, reason: 'exception', error: err.message };
