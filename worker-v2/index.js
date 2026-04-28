@@ -6,9 +6,8 @@ const { addToSmartLead } = require('./smartlead');
 const { postSlackMessage } = require('./slack');
 const { parseRb2bVisitAt } = require('./visitTime');
 const { reportTouchpoint } = require('./ingest');
-
-const SLACK_TOKEN = process.env.SLACK_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
+const { listActiveClients, fetchClientConfig } = require('./uiClient');
+const { fetchAllSlackMessages } = require('./slackFetch');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
 
@@ -99,51 +98,31 @@ function extractLead(msg) {
   return null;
 }
 
-async function fetchAllSlackMessages(oldest) {
-  if (!SLACK_TOKEN || !CHANNEL_ID) {
-    throw new Error('SLACK_TOKEN and CHANNEL_ID env vars are required');
-  }
-  let allMessages = [];
-  let cursor;
-  while (true) {
-    const params = new URLSearchParams({ channel: CHANNEL_ID, oldest, limit: '200' });
-    if (cursor) params.set('cursor', cursor);
-    const res = await fetch('https://slack.com/api/conversations.history?' + params, {
-      headers: { Authorization: 'Bearer ' + SLACK_TOKEN },
-    });
-    if (!res.ok) throw new Error('Slack HTTP error: ' + res.status);
-    const data = await res.json();
-    if (!data.ok) throw new Error('Slack API error: ' + data.error);
-    allMessages = allMessages.concat(data.messages || []);
-    if (data.has_more && data.response_metadata && data.response_metadata.next_cursor) {
-      cursor = data.response_metadata.next_cursor;
-    } else {
-      break;
-    }
-  }
-  return allMessages;
+function multiTenantEnabled() {
+  const ui = String(process.env.UI_PUBLIC_URL || '').trim();
+  const secret = String(process.env.WORKER_CONFIG_SECRET || '').trim();
+  return !!(ui && secret);
 }
 
-async function main() {
-  logger.info('RB2B lead router v2 starting');
+async function runForClient(clientRow, cfg) {
+  const clientId = clientRow.id;
+  const channelId = cfg.slack_channel_id;
+  logger.info('Client run starting', { clientId, name: cfg.name, channel: channelId });
 
   const oldest = String(Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS);
-  logger.info('Polling Slack', { oldest, channel: CHANNEL_ID, lookbackSeconds: LOOKBACK_SECONDS });
 
   let messages;
   try {
-    messages = await fetchAllSlackMessages(oldest);
+    messages = await fetchAllSlackMessages({ slack_token: cfg.slack_token, slack_channel_id: channelId, oldest });
   } catch (err) {
-    logger.error('Failed to fetch Slack messages', { error: err.message });
-    process.exit(1);
+    logger.error('Failed to fetch Slack messages', { clientId, error: err.message });
+    return { ok: false, error: 'slack_fetch_failed' };
   }
 
   if (messages.length === 0) {
-    logger.info('No messages found');
-    return;
+    logger.info('No messages found', { clientId });
+    return { ok: true, stats: { leadsFound: 0, routedHeyReach: 0, routedSmartLead: 0, skipped: 0, parseFailures: 0 } };
   }
-
-  logger.info('Found ' + messages.length + ' messages to process');
 
   let leadsFound = 0;
   let routedHeyReach = 0;
@@ -163,7 +142,7 @@ async function main() {
 
     const icpResult = passesICP(lead);
     if (!icpResult.pass) {
-      logger.info('Lead skipped (ICP filter)', { lead: leadName, reason: icpResult.reason });
+      logger.info('Lead skipped (ICP filter)', { clientId, lead: leadName, reason: icpResult.reason });
       skipped++;
       continue;
     }
@@ -177,9 +156,9 @@ async function main() {
     if (!email) {
       try {
         const companyDomain = lead.companyWebsite ? lead.companyWebsite.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : null;
-        email = await findWorkEmail({ ...lead, companyDomain });
+        email = await findWorkEmail({ ...lead, companyDomain }, cfg);
       } catch (err) {
-        logger.error('Prospeo email enrichment error', { error: err.message, lead: leadName });
+        logger.error('Prospeo email enrichment error', { clientId, error: err.message, lead: leadName });
       }
     }
 
@@ -191,11 +170,11 @@ async function main() {
     let heyResult = { ok: false };
 
     if (emailKey) {
-      smartResult = await addToSmartLead(lead, email);
+      smartResult = await addToSmartLead(lead, email, cfg);
       if (smartResult.ok) {
         routedSmartLead++;
         await reportTouchpoint({
-          client_external_id: CHANNEL_ID,
+          client_external_id: channelId,
           lead_key: emailKey,
           type: 'enrolled_smartlead',
           slack_message_ts: slackTs,
@@ -206,11 +185,11 @@ async function main() {
     }
 
     if (linkedinKey) {
-      heyResult = await addToHeyReach(lead);
+      heyResult = await addToHeyReach(lead, cfg);
       if (heyResult.ok) {
         routedHeyReach++;
         await reportTouchpoint({
-          client_external_id: CHANNEL_ID,
+          client_external_id: channelId,
           lead_key: linkedinKey,
           type: 'enrolled_heyreach',
           slack_message_ts: slackTs,
@@ -222,6 +201,7 @@ async function main() {
 
     const lines = [];
     lines.push('*Enrollment complete*');
+    lines.push('*Client:* ' + cfg.name);
     lines.push('*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''));
     if (emailKey) {
       lines.push(
@@ -256,10 +236,51 @@ async function main() {
     }
     lines.push('_First send/open/reply timing is posted when SmartLead/HeyReach webhooks fire._');
 
-    await postSlackMessage(lines.join('\n'));
+    await postSlackMessage(channelId, lines.join('\n'), cfg.slack_token);
   }
 
-  logger.info('Run complete', { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures });
+  logger.info('Client run complete', { clientId, leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures });
+  return { ok: true, stats: { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures } };
+}
+
+async function main() {
+  logger.info('RB2B lead router v2 starting', { multiTenant: multiTenantEnabled() });
+
+  if (!multiTenantEnabled()) {
+    logger.warn('Multi-tenant disabled: set UI_PUBLIC_URL + WORKER_CONFIG_SECRET to process all clients. Running legacy single-tenant mode.');
+    const cfg = {
+      name: 'single-tenant',
+      slack_channel_id: process.env.CHANNEL_ID,
+      slack_token: process.env.SLACK_TOKEN,
+      prospeo_api_key: process.env.PROSPEO_API_KEY,
+      smartlead_api_key: process.env.SMARTLEAD_API_KEY,
+      smartlead_campaign_id: process.env.SMARTLEAD_CAMPAIGN_ID,
+      heyreach_api_key: process.env.HEYREACH_API_KEY,
+      heyreach_campaign_id: process.env.HEYREACH_CAMPAIGN_ID,
+    };
+    await runForClient({ id: 'single' }, cfg);
+    return;
+  }
+
+  let clients = [];
+  try {
+    clients = await listActiveClients();
+  } catch (err) {
+    logger.error('Failed to list clients from UI', { error: err.message });
+    process.exit(1);
+  }
+
+  logger.info('Active clients', { count: clients.length });
+  for (const c of clients) {
+    let cfg;
+    try {
+      cfg = await fetchClientConfig(c.id);
+    } catch (err) {
+      logger.error('Failed to fetch client config', { clientId: c.id, error: err.message });
+      continue;
+    }
+    await runForClient(c, cfg);
+  }
 }
 
 main().catch((err) => {

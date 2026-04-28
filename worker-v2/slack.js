@@ -1,21 +1,20 @@
 const logger = require('./logger');
 
-const SLACK_TOKEN = process.env.SLACK_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-
-async function postSlackMessage(text) {
-  if (!SLACK_TOKEN || !CHANNEL_ID) {
-    logger.warn('Slack post skipped: SLACK_TOKEN or CHANNEL_ID missing');
+async function postSlackMessage(channelId, text, tokenOverride) {
+  const token = String(tokenOverride || process.env.SLACK_TOKEN || '').trim();
+  const ch = String(channelId || process.env.CHANNEL_ID || '').trim();
+  if (!token || !ch) {
+    logger.warn('Slack post skipped: missing token or channel', { hasToken: !!token, hasChannel: !!ch });
     return false;
   }
   try {
     const res = await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: {
-        Authorization: 'Bearer ' + SLACK_TOKEN,
+        Authorization: 'Bearer ' + token,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ channel: CHANNEL_ID, text }),
+      body: JSON.stringify({ channel: ch, text }),
     });
     const data = await res.json();
     if (!data.ok) {

@@ -17,6 +17,9 @@
       .card { background: color-mix(in srgb, var(--card), transparent 8%); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: 0 18px 60px rgba(0,0,0,.35); }
       .grid { display:grid; gap: 14px; grid-template-columns: 1fr; }
       @media (min-width: 920px) { .grid { grid-template-columns: 1.2fr .8fr; } }
+      .grid .span-2 { grid-column: 1 / -1; }
+      input.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; }
+      .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }
       table { width:100%; border-collapse: collapse; }
       th, td { padding: 10px 10px; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: top; }
       th { text-align:left; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
