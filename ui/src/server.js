@@ -168,7 +168,7 @@ function envBlock(client) {
     `# DEFAULT_PROSPEO_API_KEY=pk_...`,
     `# DEFAULT_BETTERCONTACT_API_KEY=...`,
     ``,
-    `# Per client in the UI: Slack channel ID, SmartLead + HeyReach API keys and campaign IDs only.`,
+    `# Per client in the UI: Slack channel ID, optional Slack bot if workspace ≠ default, SmartLead + HeyReach.`,
     ``,
     `# Touchpoint ingest (same secret on UI + worker)`,
     `UI_TOUCHPOINT_INGEST_SECRET=...`,
@@ -199,6 +199,7 @@ app.post('/clients', async (req, res) => {
     slack_channel_id,
     heyreach_campaign_id,
     smartlead_campaign_id,
+    slack_token,
     smartlead_api_key,
     heyreach_api_key,
     notes,
@@ -207,15 +208,16 @@ app.post('/clients', async (req, res) => {
   await pool.query(
     `insert into clients
       (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id,
-       smartlead_api_key, heyreach_api_key,
+       slack_token, smartlead_api_key, heyreach_api_key,
        notes, webhook_secret)
-     values ($1,$2,$3,$4,$5,$6,$7,$8, encode(gen_random_bytes(24), 'hex'))`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9, encode(gen_random_bytes(24), 'hex'))`,
     [
       (name || '').trim(),
       normalizeStatus(status),
       (slack_channel_id || '').trim(),
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
+      (slack_token || '').trim() || null,
       (smartlead_api_key || '').trim() || null,
       (heyreach_api_key || '').trim() || null,
       (notes || '').trim() || null,
@@ -254,6 +256,7 @@ app.post('/clients/:id', async (req, res) => {
     slack_channel_id,
     heyreach_campaign_id,
     smartlead_campaign_id,
+    slack_token,
     smartlead_api_key,
     heyreach_api_key,
     notes,
@@ -266,6 +269,7 @@ app.post('/clients/:id', async (req, res) => {
     return t ? t : null;
   };
 
+  const nextSlackToken = emptyToNull(slack_token) != null ? emptyToNull(slack_token) : curRows[0].slack_token;
   const nextSmartKey = emptyToNull(smartlead_api_key) != null ? emptyToNull(smartlead_api_key) : curRows[0].smartlead_api_key;
   const nextHeyKey = emptyToNull(heyreach_api_key) != null ? emptyToNull(heyreach_api_key) : curRows[0].heyreach_api_key;
 
@@ -276,9 +280,10 @@ app.post('/clients/:id', async (req, res) => {
       slack_channel_id = $4,
       heyreach_campaign_id = $5,
       smartlead_campaign_id = $6,
-      smartlead_api_key = $7,
-      heyreach_api_key = $8,
-      notes = $9
+      slack_token = $7,
+      smartlead_api_key = $8,
+      heyreach_api_key = $9,
+      notes = $10
      where id = $1`,
     [
       req.params.id,
@@ -287,6 +292,7 @@ app.post('/clients/:id', async (req, res) => {
       (slack_channel_id || '').trim(),
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
+      nextSlackToken,
       nextSmartKey,
       nextHeyKey,
       (notes || '').trim() || null,

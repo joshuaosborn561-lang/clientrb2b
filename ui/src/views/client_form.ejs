@@ -1,7 +1,7 @@
 <div class="row">
   <div class="col">
     <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
-    <p class="muted">Set this client’s <strong>Slack channel</strong> (RB2B alerts) and <strong>SmartLead + HeyReach</strong> campaign IDs and API keys. Prospeo, BetterContact, and the Slack bot token that reads the channel are pre-filled from the UI service’s Railway env (<code>DEFAULT_*</code>).</p>
+    <p class="muted">Set this client’s <strong>Slack channel</strong> (RB2B alerts) and <strong>SmartLead + HeyReach</strong> campaign IDs and API keys. Prospeo + BetterContact use shared UI env (<code>DEFAULT_*</code>). If RB2B is in a <em>different</em> Slack workspace than your default bot, paste that workspace’s bot token here (overrides <code>DEFAULT_SLACK_BOT_TOKEN</code>).</p>
   </div>
 </div>
 
@@ -23,6 +23,11 @@
     <div class="field span-2">
       <label>Slack channel ID (RB2B visitor alerts)</label>
       <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" class="mono" spellcheck="false" />
+    </div>
+
+    <div class="field span-2">
+      <label>Slack bot token (optional — only if this client’s RB2B channel is in another workspace)</label>
+      <input type="text" class="mono" name="slack_token" value="" placeholder="<%= client && client.slack_token ? '(unchanged if left blank)' : 'xoxb-…' %>" spellcheck="false" autocapitalize="off" />
     </div>
 
     <div class="field">

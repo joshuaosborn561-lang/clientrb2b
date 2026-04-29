@@ -13,6 +13,7 @@
   <h3 style="margin-top: 0;">Per-client (you set in the UI)</h3>
   <div class="grid">
     <div><div class="muted">Slack channel ID</div><div><code><%= client.slack_channel_id || '' %></code></div></div>
+    <div><div class="muted">Slack bot (this client)</div><div><%= typeof maskSecret !== 'undefined' ? (maskSecret(client.slack_token) || '(uses DEFAULT_SLACK_BOT_TOKEN)') : '' %></div></div>
     <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
     <div><div class="muted">SmartLead campaign ID</div><div><code><%= client.smartlead_campaign_id || '—' %></code></div></div>
     <div><div class="muted">HeyReach campaign ID</div><div><code><%= client.heyreach_campaign_id || '—' %></code></div></div>
