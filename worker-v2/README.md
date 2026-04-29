@@ -8,6 +8,16 @@ Polls each **active** client’s RB2B Slack channel (multi-tenant when `UI_PUBLI
 - posts enrollment summary to that client’s Slack channel
 - optional touchpoint ingest for visit → first engagement webhooks
 
+### One-off backfill (single client, custom lookback)
+
+Example: last 14 days for one client UUID (still uses UI config API):
+
+```bash
+LOOKBACK_SECONDS=1209600 WORKER_ONLY_CLIENT_ID=<client-uuid> node index.js
+```
+
+List client IDs: `GET /api/worker/clients` with `Authorization: Bearer $WORKER_CONFIG_SECRET`.
+
 ### Multi-tenant (recommended)
 
 **Worker service**

@@ -12,6 +12,9 @@ const { isUsableWorkEmail } = require('./emailUtils');
 const { findWorkEmailBetterContact } = require('./bettercontact');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
+/** When set (UUID), multi-tenant mode processes only this client (e.g. backfill one workspace). Still uses /api/worker-config/:id. */
+const WORKER_ONLY_CLIENT_ID = String(process.env.WORKER_ONLY_CLIENT_ID || process.env.BACKFILL_CLIENT_ID || '').trim();
+const ICP_DISABLED = /^1|true|yes$/i.test(String(process.env.DISABLE_ICP_FILTER || '').trim());
 
 // --- ICP filtering (copied defaults from legacy worker) ---
 const EXCLUDED_EMPLOYEE_RANGES = ['1-10', '11-50'];
@@ -23,6 +26,7 @@ const EXCLUDED_INDUSTRIES = [
 ];
 
 function passesICP(lead) {
+  if (ICP_DISABLED) return { pass: true, reason: null };
   if (EXCLUDED_EMPLOYEE_RANGES.includes(lead.employees)) {
     return { pass: false, reason: 'Employee range too small: ' + lead.employees };
   }
@@ -289,13 +293,18 @@ async function main() {
 
   let clients = [];
   try {
-    clients = await listActiveClients();
+    if (WORKER_ONLY_CLIENT_ID) {
+      clients = [{ id: WORKER_ONLY_CLIENT_ID, name: 'single-run', status: 'active', slack_channel_id: '' }];
+      logger.info('Single-client run', { clientId: WORKER_ONLY_CLIENT_ID, lookbackSeconds: LOOKBACK_SECONDS });
+    } else {
+      clients = await listActiveClients();
+    }
   } catch (err) {
     logger.error('Failed to list clients from UI', { error: err.message });
     process.exit(1);
   }
 
-  logger.info('Active clients', { count: clients.length });
+  logger.info('Clients to run', { count: clients.length, onlyClient: !!WORKER_ONLY_CLIENT_ID });
   for (const c of clients) {
     let cfg;
     try {
