@@ -17,6 +17,12 @@
     <div><div class="muted">HeyReach Campaign ID (LinkedIn)</div><div><code><%= client.heyreach_campaign_id || '' %></code></div></div>
     <div><div class="muted">SmartLead Campaign ID (email)</div><div><code><%= client.smartlead_campaign_id || '' %></code></div></div>
     <div class="span-2"><div class="muted">Webhook secret (per client)</div><div><code><%= client.webhook_secret || '' %></code></div></div>
+    <div><div class="muted">Slack token</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.slack_token) : '' %></div></div>
+    <div><div class="muted">Prospeo API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.prospeo_api_key) : '' %></div></div>
+    <div><div class="muted">BetterContact API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.bettercontact_api_key) : '' %></div></div>
+    <div><div class="muted">SmartLead API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.smartlead_api_key) : '' %></div></div>
+    <div><div class="muted">HeyReach API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.heyreach_api_key) : '' %></div></div>
+    <div class="span-2"><div class="muted">Notion</div><div>Token: <%= typeof maskSecret !== 'undefined' ? maskSecret(client.notion_api_key) : '' %> &nbsp; DB: <code><%= client.notion_enrichment_db_id || '—' %></code> &nbsp; Title col: <code><%= client.notion_title_property || 'Name' %></code></div></div>
   </div>
 
   <% const hookBase = (typeof publicBase !== 'undefined' && publicBase) ? publicBase : ''; %>

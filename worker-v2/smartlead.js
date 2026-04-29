@@ -1,9 +1,8 @@
 const logger = require('./logger');
 
-const SMARTLEAD_API_KEY = process.env.SMARTLEAD_API_KEY;
-const SMARTLEAD_CAMPAIGN_ID = process.env.SMARTLEAD_CAMPAIGN_ID;
-
-async function addToSmartLead(lead, email) {
+async function addToSmartLead(lead, email, cfg = {}) {
+  const SMARTLEAD_API_KEY = (cfg.smartlead_api_key || process.env.SMARTLEAD_API_KEY || '').trim();
+  const SMARTLEAD_CAMPAIGN_ID = String(cfg.smartlead_campaign_id || process.env.SMARTLEAD_CAMPAIGN_ID || '').trim();
   if (!SMARTLEAD_API_KEY || !SMARTLEAD_CAMPAIGN_ID) {
     logger.warn('SmartLead config missing, skipping');
     return { ok: false, reason: 'missing_config' };
