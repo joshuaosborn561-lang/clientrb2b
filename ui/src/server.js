@@ -30,6 +30,40 @@ app.use((req, res, next) => {
 
 const pool = new Pool({ connectionString: DATABASE_URL, ssl: process.env.PGSSLMODE ? { rejectUnauthorized: false } : undefined });
 
+/** Shared across all clients — set on the UI Railway service (worker reads via API). */
+function defaultSlackBotToken() {
+  return String(process.env.DEFAULT_SLACK_BOT_TOKEN || '').trim();
+}
+function defaultProspeoKey() {
+  return String(process.env.DEFAULT_PROSPEO_API_KEY || '').trim();
+}
+function defaultBetterContactKey() {
+  return String(process.env.DEFAULT_BETTERCONTACT_API_KEY || '').trim();
+}
+
+function workerConfigPayload(c) {
+  const base = (process.env.UI_PUBLIC_URL || '').replace(/\/$/, '');
+  const slack_token = (c.slack_token && String(c.slack_token).trim()) || defaultSlackBotToken() || null;
+  const prospeo_api_key = (c.prospeo_api_key && String(c.prospeo_api_key).trim()) || defaultProspeoKey() || null;
+  const bettercontact_api_key =
+    (c.bettercontact_api_key && String(c.bettercontact_api_key).trim()) || defaultBetterContactKey() || null;
+  return {
+    ok: true,
+    client_id: c.id,
+    name: c.name,
+    status: c.status,
+    slack_channel_id: c.slack_channel_id,
+    slack_token,
+    prospeo_api_key,
+    bettercontact_api_key,
+    smartlead_api_key: c.smartlead_api_key || null,
+    smartlead_campaign_id: c.smartlead_campaign_id || null,
+    heyreach_api_key: c.heyreach_api_key || null,
+    heyreach_campaign_id: c.heyreach_campaign_id || null,
+    ui_touchpoint_ingest_url: base ? base + '/api/touchpoints/report' : null,
+  };
+}
+
 async function ensureSchema() {
   await pool.query(`create extension if not exists pgcrypto;`);
   await pool.query(`
@@ -45,9 +79,6 @@ async function ensureSchema() {
       smartlead_api_key text,
       heyreach_api_key text,
       bettercontact_api_key text,
-      notion_api_key text,
-      notion_enrichment_db_id text,
-      notion_title_property text,
       notes text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
@@ -60,9 +91,9 @@ async function ensureSchema() {
   await pool.query(`alter table clients add column if not exists smartlead_api_key text;`);
   await pool.query(`alter table clients add column if not exists heyreach_api_key text;`);
   await pool.query(`alter table clients add column if not exists bettercontact_api_key text;`);
-  await pool.query(`alter table clients add column if not exists notion_api_key text;`);
-  await pool.query(`alter table clients add column if not exists notion_enrichment_db_id text;`);
-  await pool.query(`alter table clients add column if not exists notion_title_property text;`);
+  await pool.query(`alter table clients drop column if exists notion_api_key;`);
+  await pool.query(`alter table clients drop column if exists notion_enrichment_db_id;`);
+  await pool.query(`alter table clients drop column if exists notion_title_property;`);
 
   await pool.query(`alter table clients drop column if exists manychat_flow_ns;`);
   await pool.query(`alter table clients drop column if exists manychat_sms_consent_phrase;`);
@@ -93,6 +124,13 @@ async function ensureSchema() {
   `);
 
   await ensureTouchpointSchema(pool);
+
+  await pool.query(`
+    insert into clients (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes)
+    select 'Nieto', 'paused', 'C0000000000', null, null,
+           'Paused until you set the real RB2B Slack channel ID and SmartLead/HeyReach campaign IDs + API keys (Edit). Shared Prospeo/BetterContact/Slack bot come from UI Railway env.'
+    where not exists (select 1 from clients where lower(trim(name)) = 'nieto');
+  `);
 }
 
 function normalizeStatus(s) {
@@ -125,11 +163,12 @@ function envBlock(client) {
     `UI_PUBLIC_URL=${base}`,
     `WORKER_CONFIG_SECRET=... (same as UI)`,
     ``,
-    `# (Legacy single-tenant mode is still supported but not recommended)`,
-    `# SLACK_TOKEN=...`,
-    `# CHANNEL_ID=${client.slack_channel_id}`,
+    `# Shared defaults (UI service — worker merges into each client):`,
+    `# DEFAULT_SLACK_BOT_TOKEN=xoxb-...`,
+    `# DEFAULT_PROSPEO_API_KEY=pk_...`,
+    `# DEFAULT_BETTERCONTACT_API_KEY=...`,
     ``,
-    `# Client secrets are stored in the UI DB and fetched at runtime.`,
+    `# Per client in the UI: Slack channel ID, SmartLead + HeyReach API keys and campaign IDs only.`,
     ``,
     `# Touchpoint ingest (same secret on UI + worker)`,
     `UI_TOUCHPOINT_INGEST_SECRET=...`,
@@ -160,50 +199,46 @@ app.post('/clients', async (req, res) => {
     slack_channel_id,
     heyreach_campaign_id,
     smartlead_campaign_id,
-    slack_token,
-    prospeo_api_key,
     smartlead_api_key,
     heyreach_api_key,
-    bettercontact_api_key,
-    notion_api_key,
-    notion_enrichment_db_id,
-    notion_title_property,
     notes,
   } = req.body;
 
   await pool.query(
     `insert into clients
       (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id,
-       slack_token, prospeo_api_key, smartlead_api_key, heyreach_api_key, bettercontact_api_key,
-       notion_api_key, notion_enrichment_db_id, notion_title_property,
+       smartlead_api_key, heyreach_api_key,
        notes, webhook_secret)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, encode(gen_random_bytes(24), 'hex'))`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8, encode(gen_random_bytes(24), 'hex'))`,
     [
       (name || '').trim(),
       normalizeStatus(status),
       (slack_channel_id || '').trim(),
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
-      (slack_token || '').trim() || null,
-      (prospeo_api_key || '').trim() || null,
       (smartlead_api_key || '').trim() || null,
       (heyreach_api_key || '').trim() || null,
-      (bettercontact_api_key || '').trim() || null,
-      (notion_api_key || '').trim() || null,
-      (notion_enrichment_db_id || '').trim() || null,
-      (notion_title_property || '').trim() || null,
       (notes || '').trim() || null,
     ]
   );
 
-  res.redirect('/');
+  const { rows } = await pool.query('select id from clients order by created_at desc limit 1');
+  res.redirect(rows[0] ? '/clients/' + rows[0].id : '/');
 });
 
 app.get('/clients/:id', async (req, res) => {
   const { rows } = await pool.query('select * from clients where id = $1', [req.params.id]);
   if (rows.length === 0) return res.status(404).send('Not found');
   const client = rows[0];
-  res.render('client', { title: `Client: ${client.name}`, client, envBlock: envBlock(client) });
+  res.render('client', {
+    title: `Client: ${client.name}`,
+    client,
+    envBlock: envBlock(client),
+    maskSecret,
+    defaultSlackBotToken,
+    defaultProspeoKey,
+    defaultBetterContactKey,
+  });
 });
 
 app.get('/clients/:id/edit', async (req, res) => {
@@ -219,33 +254,20 @@ app.post('/clients/:id', async (req, res) => {
     slack_channel_id,
     heyreach_campaign_id,
     smartlead_campaign_id,
-    slack_token,
-    prospeo_api_key,
     smartlead_api_key,
     heyreach_api_key,
-    bettercontact_api_key,
-    notion_api_key,
-    notion_enrichment_db_id,
-    notion_title_property,
     notes,
   } = req.body;
 
   const { rows: curRows } = await pool.query('select * from clients where id = $1', [req.params.id]);
   if (curRows.length === 0) return res.status(404).send('Not found');
-  const cur = curRows[0];
   const emptyToNull = (v) => {
     const t = String(v || '').trim();
     return t ? t : null;
   };
 
-  const nextSlackToken = emptyToNull(slack_token) != null ? emptyToNull(slack_token) : cur.slack_token;
-  const nextProspeo = emptyToNull(prospeo_api_key) != null ? emptyToNull(prospeo_api_key) : cur.prospeo_api_key;
-  const nextSmartKey = emptyToNull(smartlead_api_key) != null ? emptyToNull(smartlead_api_key) : cur.smartlead_api_key;
-  const nextHeyKey = emptyToNull(heyreach_api_key) != null ? emptyToNull(heyreach_api_key) : cur.heyreach_api_key;
-  const nextBc = emptyToNull(bettercontact_api_key) != null ? emptyToNull(bettercontact_api_key) : cur.bettercontact_api_key;
-  const nextNotion = emptyToNull(notion_api_key) != null ? emptyToNull(notion_api_key) : cur.notion_api_key;
-  const nextNotionDb = emptyToNull(notion_enrichment_db_id) != null ? emptyToNull(notion_enrichment_db_id) : cur.notion_enrichment_db_id;
-  const nextNotionTitle = emptyToNull(notion_title_property) != null ? emptyToNull(notion_title_property) : cur.notion_title_property;
+  const nextSmartKey = emptyToNull(smartlead_api_key) != null ? emptyToNull(smartlead_api_key) : curRows[0].smartlead_api_key;
+  const nextHeyKey = emptyToNull(heyreach_api_key) != null ? emptyToNull(heyreach_api_key) : curRows[0].heyreach_api_key;
 
   await pool.query(
     `update clients set
@@ -254,15 +276,9 @@ app.post('/clients/:id', async (req, res) => {
       slack_channel_id = $4,
       heyreach_campaign_id = $5,
       smartlead_campaign_id = $6,
-      slack_token = $7,
-      prospeo_api_key = $8,
-      smartlead_api_key = $9,
-      heyreach_api_key = $10,
-      bettercontact_api_key = $11,
-      notion_api_key = $12,
-      notion_enrichment_db_id = $13,
-      notion_title_property = $14,
-      notes = $15
+      smartlead_api_key = $7,
+      heyreach_api_key = $8,
+      notes = $9
      where id = $1`,
     [
       req.params.id,
@@ -271,14 +287,8 @@ app.post('/clients/:id', async (req, res) => {
       (slack_channel_id || '').trim(),
       (heyreach_campaign_id || '').trim() || null,
       (smartlead_campaign_id || '').trim() || null,
-      nextSlackToken,
-      nextProspeo,
       nextSmartKey,
       nextHeyKey,
-      nextBc,
-      nextNotion,
-      nextNotionDb,
-      nextNotionTitle,
       (notes || '').trim() || null,
     ]
   );
@@ -309,26 +319,7 @@ app.get('/api/worker-config/:clientId', async (req, res) => {
   if (!requireWorkerAuth(req, res)) return;
   const { rows } = await pool.query('select * from clients where id = $1', [req.params.clientId]);
   if (rows.length === 0) return res.status(404).json({ ok: false, error: 'not_found' });
-  const c = rows[0];
-  const base = (process.env.UI_PUBLIC_URL || '').replace(/\/$/, '');
-  res.json({
-    ok: true,
-    client_id: c.id,
-    name: c.name,
-    status: c.status,
-    slack_channel_id: c.slack_channel_id,
-    slack_token: c.slack_token || null,
-    prospeo_api_key: c.prospeo_api_key || null,
-    bettercontact_api_key: c.bettercontact_api_key || null,
-    smartlead_api_key: c.smartlead_api_key || null,
-    smartlead_campaign_id: c.smartlead_campaign_id || null,
-    heyreach_api_key: c.heyreach_api_key || null,
-    heyreach_campaign_id: c.heyreach_campaign_id || null,
-    notion_api_key: c.notion_api_key || null,
-    notion_enrichment_db_id: c.notion_enrichment_db_id || null,
-    notion_title_property: c.notion_title_property || null,
-    ui_touchpoint_ingest_url: base ? base + '/api/touchpoints/report' : null,
-  });
+  res.json(workerConfigPayload(rows[0]));
 });
 
 app.get('/health', (req, res) => res.json({ ok: true }));

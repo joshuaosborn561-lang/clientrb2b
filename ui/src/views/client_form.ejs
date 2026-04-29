@@ -1,7 +1,7 @@
 <div class="row">
   <div class="col">
     <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
-    <p class="muted">Multi-tenant worker pulls per-client tokens/keys from this UI. Leave blank to keep existing secrets unchanged.</p>
+    <p class="muted">Set this client’s <strong>Slack channel</strong> (RB2B alerts) and <strong>SmartLead + HeyReach</strong> campaign IDs and API keys. Prospeo, BetterContact, and the Slack bot token that reads the channel are pre-filled from the UI service’s Railway env (<code>DEFAULT_*</code>).</p>
   </div>
 </div>
 
@@ -20,68 +20,34 @@
       </select>
     </div>
 
-    <div class="field">
-      <label>Slack channel ID</label>
-      <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" />
-    </div>
-
-    <div class="field">
-      <label>HeyReach campaign ID (LinkedIn)</label>
-      <input name="heyreach_campaign_id" value="<%= client && client.heyreach_campaign_id ? client.heyreach_campaign_id : '' %>" placeholder="12345" />
+    <div class="field span-2">
+      <label>Slack channel ID (RB2B visitor alerts)</label>
+      <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" class="mono" spellcheck="false" />
     </div>
 
     <div class="field">
       <label>SmartLead campaign ID (email)</label>
-      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" />
+      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" class="mono" spellcheck="false" />
+    </div>
+
+    <div class="field">
+      <label>HeyReach campaign ID (LinkedIn)</label>
+      <input name="heyreach_campaign_id" value="<%= client && client.heyreach_campaign_id ? client.heyreach_campaign_id : '' %>" placeholder="12345" class="mono" spellcheck="false" />
     </div>
 
     <div class="field span-2">
-      <label>Slack bot token (read RB2B channel; needs conversations.history)</label>
-      <input type="text" class="mono" name="slack_token" value="" placeholder="<%= client && client.slack_token ? '(unchanged if left blank)' : 'xoxb-…' %>" spellcheck="false" autocapitalize="off" />
-    </div>
-
-    <div class="field">
-      <label>Prospeo API key (email enrichment)</label>
-      <input type="text" class="mono" name="prospeo_api_key" value="" placeholder="<%= client && client.prospeo_api_key ? '(unchanged if left blank)' : 'pk_…' %>" spellcheck="false" autocapitalize="off" />
-    </div>
-
-    <div class="field">
-      <label>BetterContact API key (optional fallback if Prospeo finds nothing)</label>
-      <input type="text" class="mono" name="bettercontact_api_key" value="" placeholder="<%= client && client.bettercontact_api_key ? '(unchanged if left blank)' : 'X-API-Key' %>" spellcheck="false" autocapitalize="off" />
-    </div>
-
-    <div class="field">
       <label>SmartLead API key</label>
-      <input type="text" class="mono" name="smartlead_api_key" value="" placeholder="<%= client && client.smartlead_api_key ? '(unchanged if left blank)' : '…' %>" spellcheck="false" autocapitalize="off" />
-    </div>
-
-    <div class="field">
-      <label>HeyReach API key</label>
-      <input type="text" class="mono" name="heyreach_api_key" value="" placeholder="<%= client && client.heyreach_api_key ? '(unchanged if left blank)' : '…' %>" spellcheck="false" autocapitalize="off" />
+      <input type="text" class="mono" name="smartlead_api_key" value="" placeholder="<%= client && client.smartlead_api_key ? '(unchanged if left blank)' : 'paste key' %>" spellcheck="false" autocapitalize="off" />
     </div>
 
     <div class="field span-2">
-      <label>Notion integration token (optional: log misses when Prospeo + BetterContact find nothing)</label>
-      <input type="text" class="mono" name="notion_api_key" value="" placeholder="<%= client && client.notion_api_key ? '(unchanged if left blank)' : 'secret_…' %>" spellcheck="false" autocapitalize="off" />
-    </div>
-
-    <div class="field">
-      <label>Notion database ID</label>
-      <input type="text" class="mono" name="notion_enrichment_db_id" value="<%= client && client.notion_enrichment_db_id ? client.notion_enrichment_db_id : '' %>" placeholder="32-char id with or without hyphens" spellcheck="false" />
-    </div>
-
-    <div class="field">
-      <label>Notion title property (default “Name”)</label>
-      <input type="text" class="mono" name="notion_title_property" value="<%= client && client.notion_title_property ? client.notion_title_property : '' %>" placeholder="Name" spellcheck="false" />
-    </div>
-
-    <div class="field span-2 muted" style="margin-top:-4px;">
-      Worker config is per-client. If you see “skipping (missing config)” in Slack, it means either the API key or campaign ID is blank here.
+      <label>HeyReach API key</label>
+      <input type="text" class="mono" name="heyreach_api_key" value="" placeholder="<%= client && client.heyreach_api_key ? '(unchanged if left blank)' : 'paste key' %>" spellcheck="false" autocapitalize="off" />
     </div>
 
     <div class="field span-2">
       <label>Notes (optional)</label>
-      <textarea name="notes" rows="4" placeholder="Anything about this client..."><%= client && client.notes ? client.notes : '' %></textarea>
+      <textarea name="notes" rows="3" placeholder="Anything about this client..."><%= client && client.notes ? client.notes : '' %></textarea>
     </div>
   </div>
 

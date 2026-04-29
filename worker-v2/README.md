@@ -1,40 +1,35 @@
-## `worker-v2/` (Prospeo → SmartLead + HeyReach)
+## `worker-v2/` (Prospeo → BetterContact → SmartLead + HeyReach)
 
-This is a **new** worker that does **not** modify the legacy worker in the repo root.
+Polls each **active** client’s RB2B Slack channel (multi-tenant when `UI_PUBLIC_URL` + `WORKER_CONFIG_SECRET` are set), then:
 
-It polls a Slack channel where RB2B posts identified visitor alerts, then:
+- treats masked RB2B emails as missing; enriches via **Prospeo**, then **BetterContact** when configured
+- **SmartLead** when a usable email exists
+- **HeyReach** when a LinkedIn URL exists
+- posts enrollment summary to that client’s Slack channel
+- optional touchpoint ingest for visit → first engagement webhooks
 
-- enriches missing **work email** via Prospeo `POST https://api.prospeo.io/enrich-person` (when `PROSPEO_API_KEY` is set)
-- if an email is available, adds the lead to **SmartLead**
-- if a LinkedIn URL exists, adds the lead to **HeyReach** (independent of email)
-- posts an **enrollment summary** to the same Slack channel (`chat.postMessage`)
-- reports enrollments to the **UI** so webhooks can tie SmartLead/HeyReach events back to visit time
+### Multi-tenant (recommended)
 
-### Required env vars
+**Worker service**
 
-- `SLACK_TOKEN` — bot token with `conversations:history` (read RB2B channel)
-- `CHANNEL_ID` — that client’s RB2B Slack channel ID
-- `PROSPEO_API_KEY` (optional; Prospeo `X-KEY` header — omit if RB2B always includes email)
+- `UI_PUBLIC_URL` — public UI base URL
+- `WORKER_CONFIG_SECRET` — same bearer secret as the UI service
 
-### Touchpoint / timing (optional but recommended)
+**UI service** (shared defaults merged into every client’s worker config)
+
+- `DEFAULT_SLACK_BOT_TOKEN` — `xoxb-…` with `conversations:history` (and channel access) for RB2B channels
+- `DEFAULT_PROSPEO_API_KEY`
+- `DEFAULT_BETTERCONTACT_API_KEY`
+
+**Per client** (in the UI DB): Slack channel ID, SmartLead + HeyReach API keys and campaign IDs only.
+
+Legacy single-tenant still works if `UI_PUBLIC_URL` / `WORKER_CONFIG_SECRET` are unset: use `SLACK_TOKEN`, `CHANNEL_ID`, and provider keys as env vars on the worker.
+
+### Touchpoint / timing (optional)
 
 - `UI_TOUCHPOINT_INGEST_URL` — e.g. `https://your-ui.example.com/api/touchpoints/report`
-- `UI_TOUCHPOINT_INGEST_SECRET` — same value on UI + worker
-
-### SmartLead (email)
-
-- `SMARTLEAD_API_KEY`
-- `SMARTLEAD_CAMPAIGN_ID`
-
-### HeyReach (LinkedIn)
-
-- `HEYREACH_API_KEY`
-- `HEYREACH_CAMPAIGN_ID`
+- `UI_TOUCHPOINT_INGEST_SECRET` — same on UI + worker
 
 ### Railway cron
 
-Create a Railway service pointing at `worker-v2/` and set a cron schedule + command:
-
-- command: `node index.js`
-
-If you already have a legacy Railway cron using the repo root, **leave it alone** and create a new service for each new client.
+Command: `node index.js` (see `railway.toml`).

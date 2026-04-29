@@ -8,6 +8,8 @@ const { parseRb2bVisitAt } = require('./visitTime');
 const { reportTouchpoint } = require('./ingest');
 const { listActiveClients, fetchClientConfig } = require('./uiClient');
 const { fetchAllSlackMessages } = require('./slackFetch');
+const { isUsableWorkEmail } = require('./emailUtils');
+const { findWorkEmailBetterContact } = require('./bettercontact');
 
 const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
 
@@ -98,6 +100,17 @@ function extractLead(msg) {
   return null;
 }
 
+function mergeWorkerConfig(cfg) {
+  const slack_token =
+    String(cfg.slack_token || '').trim() || String(process.env.DEFAULT_SLACK_BOT_TOKEN || process.env.SLACK_TOKEN || '').trim();
+  const prospeo_api_key =
+    String(cfg.prospeo_api_key || '').trim() || String(process.env.DEFAULT_PROSPEO_API_KEY || process.env.PROSPEO_API_KEY || '').trim();
+  const bettercontact_api_key =
+    String(cfg.bettercontact_api_key || '').trim() ||
+    String(process.env.DEFAULT_BETTERCONTACT_API_KEY || process.env.BETTERCONTACT_API_KEY || '').trim();
+  return { ...cfg, slack_token, prospeo_api_key, bettercontact_api_key };
+}
+
 function multiTenantEnabled() {
   const ui = String(process.env.UI_PUBLIC_URL || '').trim();
   const secret = String(process.env.WORKER_CONFIG_SECRET || '').trim();
@@ -105,6 +118,7 @@ function multiTenantEnabled() {
 }
 
 async function runForClient(clientRow, cfg) {
+  cfg = mergeWorkerConfig(cfg);
   const clientId = clientRow.id;
   const channelId = cfg.slack_channel_id;
   logger.info('Client run starting', { clientId, name: cfg.name, channel: channelId });
@@ -152,13 +166,23 @@ async function runForClient(clientRow, cfg) {
     const visitParsed = parseRb2bVisitAt(lead.visitedAt);
     const visitInstant = visitParsed.at;
 
-    let email = lead.email || null;
+    const rb2bEmailRaw = String(lead.email || '').trim();
+    let email = isUsableWorkEmail(rb2bEmailRaw) ? rb2bEmailRaw : null;
     if (!email) {
       try {
         const companyDomain = lead.companyWebsite ? lead.companyWebsite.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : null;
-        email = await findWorkEmail({ ...lead, companyDomain }, cfg);
+        const forProspeo = { ...lead, email: null };
+        email = await findWorkEmail({ ...forProspeo, companyDomain }, cfg);
       } catch (err) {
         logger.error('Prospeo email enrichment error', { clientId, error: err.message, lead: leadName });
+      }
+    }
+    if (!email) {
+      try {
+        const bc = await findWorkEmailBetterContact(lead, cfg);
+        if (bc && isUsableWorkEmail(bc)) email = bc;
+      } catch (err) {
+        logger.error('BetterContact error', { clientId, error: err.message, lead: leadName });
       }
     }
 
@@ -248,16 +272,17 @@ async function main() {
 
   if (!multiTenantEnabled()) {
     logger.warn('Multi-tenant disabled: set UI_PUBLIC_URL + WORKER_CONFIG_SECRET to process all clients. Running legacy single-tenant mode.');
-    const cfg = {
+    const cfg = mergeWorkerConfig({
       name: 'single-tenant',
       slack_channel_id: process.env.CHANNEL_ID,
       slack_token: process.env.SLACK_TOKEN,
       prospeo_api_key: process.env.PROSPEO_API_KEY,
+      bettercontact_api_key: process.env.BETTERCONTACT_API_KEY,
       smartlead_api_key: process.env.SMARTLEAD_API_KEY,
       smartlead_campaign_id: process.env.SMARTLEAD_CAMPAIGN_ID,
       heyreach_api_key: process.env.HEYREACH_API_KEY,
       heyreach_campaign_id: process.env.HEYREACH_CAMPAIGN_ID,
-    };
+    });
     await runForClient({ id: 'single' }, cfg);
     return;
   }
@@ -274,7 +299,7 @@ async function main() {
   for (const c of clients) {
     let cfg;
     try {
-      cfg = await fetchClientConfig(c.id);
+      cfg = mergeWorkerConfig(await fetchClientConfig(c.id));
     } catch (err) {
       logger.error('Failed to fetch client config', { clientId: c.id, error: err.message });
       continue;

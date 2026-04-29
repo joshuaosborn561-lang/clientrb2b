@@ -1,4 +1,5 @@
 const logger = require('./logger');
+const { isUsableWorkEmail } = require('./emailUtils');
 
 function stripSlackFormatting(text) {
   return text
@@ -72,7 +73,7 @@ function parseRB2BMessage(text) {
     logger.info('Parsed lead', {
       name: firstName + ' ' + lastName,
       company: lead.company,
-      hasEmail: !!lead.email,
+      hasUsableEmail: isUsableWorkEmail(lead.email),
       hasLinkedIn: !!lead.linkedinUrl,
     });
 
