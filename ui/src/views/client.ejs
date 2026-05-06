@@ -1,0 +1,97 @@
+<div class="row" style="justify-content: space-between; align-items: flex-start;">
+  <div>
+    <h2 style="margin-top: 0;">Client: <%= client.name %></h2>
+    <div class="muted">ID: <code><%= client.id %></code></div>
+  </div>
+  <div class="row">
+    <a class="btn" href="/clients/<%= client.id %>/edit">Edit</a>
+    <a class="btn" href="/">Back</a>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Per-client (you set in the UI)</h3>
+  <div class="grid">
+    <div><div class="muted">Slack channel ID</div><div><code><%= client.slack_channel_id || '' %></code></div></div>
+    <div><div class="muted">Slack bot (this client)</div><div><%= typeof maskSecret !== 'undefined' ? (maskSecret(client.slack_token) || '(uses DEFAULT_SLACK_BOT_TOKEN)') : '' %></div></div>
+    <div><div class="muted">Status</div><div><span class="pill <%= client.status === 'active' ? 'ok' : 'off' %>"><%= client.status %></span></div></div>
+    <div><div class="muted">SmartLead campaign ID</div><div><code><%= client.smartlead_campaign_id || '—' %></code></div></div>
+    <div><div class="muted">HeyReach campaign ID</div><div><code><%= client.heyreach_campaign_id || '—' %></code></div></div>
+    <div><div class="muted">SmartLead API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.smartlead_api_key) : '' %></div></div>
+    <div><div class="muted">HeyReach API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.heyreach_api_key) : '' %></div></div>
+    <div class="span-2"><div class="muted">Webhook secret</div><div><code><%= client.webhook_secret || '' %></code></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top: 0;">Shared (UI Railway env — same for all clients)</h3>
+  <p class="muted" style="margin-top: 0;">Set on the <strong>ui</strong> service: <code>DEFAULT_SLACK_BOT_TOKEN</code>, <code>DEFAULT_PROSPEO_API_KEY</code>, <code>DEFAULT_BETTERCONTACT_API_KEY</code>. The worker receives merged values from <code>/api/worker-config/:id</code>.</p>
+  <div class="grid">
+    <div><div class="muted">Slack bot (read channel)</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(defaultSlackBotToken()) : '' %></div></div>
+    <div><div class="muted">Prospeo</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(defaultProspeoKey()) : '' %></div></div>
+    <div><div class="muted">BetterContact</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(defaultBetterContactKey()) : '' %></div></div>
+  </div>
+</div>
+
+<% const hookBase = (typeof publicBase !== 'undefined' && publicBase) ? publicBase : ''; %>
+<% if (hookBase) { %>
+<div class="card">
+  <h3 style="margin-top: 0;">Webhooks (visit → first engagement)</h3>
+  <p class="muted">Point SmartLead and HeyReach at these URLs.</p>
+  <div class="muted" style="margin-bottom: 8px;"><strong>SmartLead</strong></div>
+  <pre style="white-space: pre-wrap;"><%= hookBase %>/hooks/smartlead/<%= client.id %>/<%= client.webhook_secret %></pre>
+  <div class="muted" style="margin: 12px 0 8px 0;"><strong>HeyReach</strong></div>
+  <pre style="white-space: pre-wrap;"><%= hookBase %>/hooks/heyreach/<%= client.id %>/<%= client.webhook_secret %></pre>
+</div>
+<% } else { %>
+<p class="muted">Set <code>UI_PUBLIC_URL</code> on the UI service to show webhook URLs.</p>
+<% } %>
+
+<% if (client.notes) { %>
+<div class="card">
+  <div class="muted">Notes</div>
+  <pre style="white-space: pre-wrap; margin: 8px 0 0 0;"><%= client.notes %></pre>
+</div>
+<% } %>
+
+<div class="card">
+  <div class="row" style="justify-content: space-between; align-items: center;">
+    <h3 style="margin: 0;">Railway env (worker-v2)</h3>
+    <button class="btn" type="button" onclick="copyEnv()">Copy</button>
+  </div>
+  <textarea id="envBlock" spellcheck="false" style="width: 100%; min-height: 200px; margin-top: 10px; background: #0b1020; color: #e7ecff; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;"><%= envBlock %></textarea>
+</div>
+
+<dialog id="onboardModal" style="max-width: 880px; width: 92vw; border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; background: #0b1020; color: #e7ecff; padding: 0;">
+  <div style="padding: 18px 18px 0 18px; border-bottom: 1px solid rgba(255,255,255,0.08);">
+    <div class="row" style="justify-content: space-between; align-items: center;">
+      <h3 style="margin: 0;">Onboarding</h3>
+      <button class="btn" onclick="document.getElementById('onboardModal').close()">Close</button>
+    </div>
+    <p class="muted">Prospeo + BetterContact + Slack read token are shared via UI Railway env. Each client only needs Slack channel + SmartLead + HeyReach.</p>
+  </div>
+  <div style="padding: 18px;">
+    <ol>
+      <li>Set <code>DEFAULT_SLACK_BOT_TOKEN</code>, <code>DEFAULT_PROSPEO_API_KEY</code>, <code>DEFAULT_BETTERCONTACT_API_KEY</code> on the <strong>ui</strong> Railway service.</li>
+      <li>Create the client; paste RB2B <strong>Slack channel ID</strong>, SmartLead + HeyReach <strong>campaign IDs</strong> and <strong>API keys</strong>.</li>
+      <li>Worker: <code>UI_PUBLIC_URL</code> + <code>WORKER_CONFIG_SECRET</code> (same as UI). Touchpoint ingest secret on UI + worker if you use engagement webhooks.</li>
+    </ol>
+  </div>
+</dialog>
+
+<div class="row" style="justify-content: flex-end;">
+  <button class="btn primary" type="button" onclick="document.getElementById('onboardModal').showModal()">Open onboarding</button>
+</div>
+
+<script>
+  async function copyEnv() {
+    const el = document.getElementById('envBlock');
+    el.select();
+    el.setSelectionRange(0, el.value.length);
+    try {
+      await navigator.clipboard.writeText(el.value);
+    } catch (e) {
+      document.execCommand('copy');
+    }
+  }
+</script>

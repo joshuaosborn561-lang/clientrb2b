@@ -1,0 +1,63 @@
+<div class="row">
+  <div class="col">
+    <h1><%= mode === 'new' ? 'New client' : 'Edit client' %></h1>
+    <p class="muted">Set this client’s <strong>Slack channel</strong> (RB2B alerts) and <strong>SmartLead + HeyReach</strong> campaign IDs and API keys. Prospeo + BetterContact use shared UI env (<code>DEFAULT_*</code>). If RB2B is in a <em>different</em> Slack workspace than your default bot, paste that workspace’s bot token here (overrides <code>DEFAULT_SLACK_BOT_TOKEN</code>).</p>
+  </div>
+</div>
+
+<form method="post" action="<%= mode === 'new' ? '/clients' : '/clients/' + client.id %>" class="card">
+  <div class="grid">
+    <div class="field">
+      <label>Name</label>
+      <input name="name" required value="<%= client ? client.name : '' %>" placeholder="Acme Inc" />
+    </div>
+
+    <div class="field">
+      <label>Status</label>
+      <select name="status">
+        <option value="active" <%= !client || client.status === 'active' ? 'selected' : '' %>>active</option>
+        <option value="paused" <%= client && client.status === 'paused' ? 'selected' : '' %>>paused</option>
+      </select>
+    </div>
+
+    <div class="field span-2">
+      <label>Slack channel ID (RB2B visitor alerts)</label>
+      <input name="slack_channel_id" required value="<%= client ? client.slack_channel_id : '' %>" placeholder="C0123ABCDEF" class="mono" spellcheck="false" />
+    </div>
+
+    <div class="field span-2">
+      <label>Slack bot token (optional — only if this client’s RB2B channel is in another workspace)</label>
+      <input type="text" class="mono" name="slack_token" value="" placeholder="<%= client && client.slack_token ? '(unchanged if left blank)' : 'xoxb-…' %>" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field">
+      <label>SmartLead campaign ID (email)</label>
+      <input name="smartlead_campaign_id" value="<%= client && client.smartlead_campaign_id ? client.smartlead_campaign_id : '' %>" placeholder="67890" class="mono" spellcheck="false" />
+    </div>
+
+    <div class="field">
+      <label>HeyReach campaign ID (LinkedIn)</label>
+      <input name="heyreach_campaign_id" value="<%= client && client.heyreach_campaign_id ? client.heyreach_campaign_id : '' %>" placeholder="12345" class="mono" spellcheck="false" />
+    </div>
+
+    <div class="field span-2">
+      <label>SmartLead API key</label>
+      <input type="text" class="mono" name="smartlead_api_key" value="" placeholder="<%= client && client.smartlead_api_key ? '(unchanged if left blank)' : 'paste key' %>" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field span-2">
+      <label>HeyReach API key</label>
+      <input type="text" class="mono" name="heyreach_api_key" value="" placeholder="<%= client && client.heyreach_api_key ? '(unchanged if left blank)' : 'paste key' %>" spellcheck="false" autocapitalize="off" />
+    </div>
+
+    <div class="field span-2">
+      <label>Notes (optional)</label>
+      <textarea name="notes" rows="3" placeholder="Anything about this client..."><%= client && client.notes ? client.notes : '' %></textarea>
+    </div>
+  </div>
+
+  <div class="actions">
+    <a class="btn" href="<%= mode === 'new' ? '/' : '/clients/' + client.id %>">Cancel</a>
+    <button class="btn primary" type="submit"><%= mode === 'new' ? 'Create client' : 'Save changes' %></button>
+  </div>
+</form>

@@ -1,0 +1,6 @@
+[build]
+# Railway should run this service from the `ui/` root directory.
+
+[start]
+command = "npm start"
+
