@@ -6,15 +6,20 @@ const { addToSmartLead } = require('./smartlead');
 const { postSlackMessage } = require('./slack');
 const { parseRb2bVisitAt } = require('./visitTime');
 const { reportTouchpoint } = require('./ingest');
-const { listActiveClients, fetchClientConfig } = require('./uiClient');
+const { listActiveClients, fetchClientConfig, fetchProcessedSet, markProcessed } = require('./uiClient');
 const { fetchAllSlackMessages } = require('./slackFetch');
 const { isUsableWorkEmail } = require('./emailUtils');
 const { findWorkEmailBetterContact } = require('./bettercontact');
 
-const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 7 * 24 * 60 * 60);
+// Default lookback is wide (30 days) on purpose: dedup means re-scanning a wide window is cheap
+// (only messages we have never fully handled do enrichment/enroll work), and it makes catch-up automatic.
+const LOOKBACK_SECONDS = Number(process.env.LOOKBACK_SECONDS || 30 * 24 * 60 * 60);
 /** When set (UUID), multi-tenant mode processes only this client (e.g. backfill one workspace). Still uses /api/worker-config/:id. */
 const WORKER_ONLY_CLIENT_ID = String(process.env.WORKER_ONLY_CLIENT_ID || process.env.BACKFILL_CLIENT_ID || '').trim();
-const ICP_DISABLED = /^1|true|yes$/i.test(String(process.env.DISABLE_ICP_FILTER || '').trim());
+/** Global override to never apply ICP filtering (e.g. backfills). Per-client opt-in is the normal control. */
+const ICP_DISABLED = /^(1|true|yes)$/i.test(String(process.env.DISABLE_ICP_FILTER || '').trim());
+/** Re-handle messages even if already marked processed (force a clean re-run). */
+const FORCE_REPROCESS = /^(1|true|yes)$/i.test(String(process.env.FORCE_REPROCESS || '').trim());
 
 // --- ICP filtering (copied defaults from legacy worker) ---
 const EXCLUDED_EMPLOYEE_RANGES = ['1-10', '11-50'];
@@ -25,8 +30,11 @@ const EXCLUDED_INDUSTRIES = [
   'farming', 'agriculture',
 ];
 
-function passesICP(lead) {
+function passesICP(lead, cfg) {
+  // ICP filtering is opt-in per client. Off by default so every RB2B visitor is enrolled.
+  // A global DISABLE_ICP_FILTER always wins (used for backfills).
   if (ICP_DISABLED) return { pass: true, reason: null };
+  if (!cfg || cfg.icp_filter_enabled !== true) return { pass: true, reason: null };
   if (EXCLUDED_EMPLOYEE_RANGES.includes(lead.employees)) {
     return { pass: false, reason: 'Employee range too small: ' + lead.employees };
   }
@@ -121,11 +129,22 @@ function multiTenantEnabled() {
   return !!(ui && secret);
 }
 
-async function runForClient(clientRow, cfg) {
+async function runForClient(clientRow, cfg, dedup) {
   cfg = mergeWorkerConfig(cfg);
   const clientId = clientRow.id;
   const channelId = cfg.slack_channel_id;
-  logger.info('Client run starting', { clientId, name: cfg.name, channel: channelId });
+  logger.info('Client run starting', {
+    clientId,
+    name: cfg.name,
+    channel: channelId,
+    icpFilter: ICP_DISABLED ? 'globally-off' : cfg.icp_filter_enabled === true ? 'on' : 'off',
+    dedup: dedup ? 'on' : 'off',
+  });
+
+  if (!channelId) {
+    logger.error('No Slack channel configured for client', { clientId, name: cfg.name });
+    return { ok: false, error: 'missing_channel' };
+  }
 
   const oldest = String(Math.floor(Date.now() / 1000) - LOOKBACK_SECONDS);
 
@@ -137,9 +156,14 @@ async function runForClient(clientRow, cfg) {
     return { ok: false, error: 'slack_fetch_failed' };
   }
 
+  let processedSet = new Set();
+  if (dedup && !FORCE_REPROCESS) {
+    processedSet = await fetchProcessedSet(clientId, oldest);
+  }
+
   if (messages.length === 0) {
     logger.info('No messages found', { clientId });
-    return { ok: true, stats: { leadsFound: 0, routedHeyReach: 0, routedSmartLead: 0, skipped: 0, parseFailures: 0 } };
+    return { ok: true, stats: { leadsFound: 0, routedHeyReach: 0, routedSmartLead: 0, skipped: 0, parseFailures: 0, deduped: 0 } };
   }
 
   let leadsFound = 0;
@@ -147,128 +171,188 @@ async function runForClient(clientRow, cfg) {
   let routedSmartLead = 0;
   let skipped = 0;
   let parseFailures = 0;
+  let deduped = 0;
 
   for (const msg of messages) {
-    const lead = extractLead(msg);
-    if (!lead) {
-      parseFailures++;
-      continue;
-    }
-
-    leadsFound++;
-    const leadName = lead.firstName + ' ' + lead.lastName;
-
-    const icpResult = passesICP(lead);
-    if (!icpResult.pass) {
-      logger.info('Lead skipped (ICP filter)', { clientId, lead: leadName, reason: icpResult.reason });
-      skipped++;
-      continue;
-    }
-
     const slackTs = msg.ts || null;
-    const slackSeenAt = slackTsToDate(slackTs);
-    const visitParsed = parseRb2bVisitAt(lead.visitedAt);
-    const visitInstant = visitParsed.at;
 
-    const rb2bEmailRaw = String(lead.email || '').trim();
-    let email = isUsableWorkEmail(rb2bEmailRaw) ? rb2bEmailRaw : null;
-    if (!email) {
-      try {
-        const companyDomain = lead.companyWebsite ? lead.companyWebsite.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : null;
-        const forProspeo = { ...lead, email: null };
-        email = await findWorkEmail({ ...forProspeo, companyDomain }, cfg);
-      } catch (err) {
-        logger.error('Prospeo email enrichment error', { clientId, error: err.message, lead: leadName });
+    if (slackTs && processedSet.has(String(slackTs))) {
+      deduped++;
+      continue;
+    }
+
+    try {
+      const outcome = await processMessage(msg, clientId, channelId, cfg);
+      if (!outcome) {
+        parseFailures++;
+        continue;
       }
-    }
-    if (!email) {
-      try {
-        const bc = await findWorkEmailBetterContact(lead, cfg);
-        if (bc && isUsableWorkEmail(bc)) email = bc;
-      } catch (err) {
-        logger.error('BetterContact error', { clientId, error: err.message, lead: leadName });
+      if (outcome.kind === 'icp_skip') {
+        skipped++;
+        continue;
       }
-    }
+      leadsFound++;
+      if (outcome.routedSmartLead) routedSmartLead++;
+      if (outcome.routedHeyReach) routedHeyReach++;
 
-    const emailKey = email ? normalizeEmailKey(email) : '';
-    const linkedinKey = normalizeLinkedinKey(lead.linkedinUrl);
-
-    const enrolledAt = new Date();
-    let smartResult = { ok: false };
-    let heyResult = { ok: false };
-
-    if (emailKey) {
-      smartResult = await addToSmartLead(lead, email, cfg);
-      if (smartResult.ok) {
-        routedSmartLead++;
-        await reportTouchpoint({
-          client_external_id: channelId,
-          lead_key: emailKey,
-          type: 'enrolled_smartlead',
-          slack_message_ts: slackTs,
-          visited_at_raw: visitParsed.text || lead.visitedAt || null,
-          visit_instant: visitInstant ? visitInstant.toISOString() : null,
-        });
+      // Mark processed only once a message reaches a terminal state with no transient errors,
+      // so anything that hit a fixable failure (bad campaign id, rate limit, timeout) is retried next run.
+      if (dedup && slackTs && !outcome.transient) {
+        await markProcessed(clientId, slackTs, outcome.leadKey || null, outcome.label || null);
       }
+    } catch (err) {
+      logger.error('Unexpected error handling message (will retry next run)', { clientId, ts: slackTs, error: err.message });
     }
+  }
 
-    if (linkedinKey) {
-      heyResult = await addToHeyReach(lead, cfg);
-      if (heyResult.ok) {
-        routedHeyReach++;
-        await reportTouchpoint({
-          client_external_id: channelId,
-          lead_key: linkedinKey,
-          type: 'enrolled_heyreach',
-          slack_message_ts: slackTs,
-          visited_at_raw: visitParsed.text || lead.visitedAt || null,
-          visit_instant: visitInstant ? visitInstant.toISOString() : null,
-        });
-      }
-    }
+  logger.info('Client run complete', { clientId, leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures, deduped });
+  return { ok: true, stats: { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures, deduped } };
+}
 
-    const lines = [];
-    lines.push('*Enrollment complete*');
-    lines.push('*Client:* ' + cfg.name);
-    lines.push('*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''));
-    if (emailKey) {
-      lines.push(
-        '*SmartLead (email):* ' +
-          (smartResult.ok ? 'enrolled `' + emailKey + '`' : 'not enrolled (' + (smartResult.reason || 'failed') + ')')
-      );
-    } else {
-      lines.push('*SmartLead (email):* skipped (no email)');
-    }
-    if (linkedinKey) {
-      lines.push(
-        '*HeyReach (LinkedIn):* ' +
-          (heyResult.ok ? 'enrolled' : 'not enrolled (' + (heyResult.reason || 'failed') + ')')
-      );
-    } else {
-      lines.push('*HeyReach (LinkedIn):* skipped (no LinkedIn URL)');
-    }
-    if (visitParsed.text) {
-      lines.push('*RB2B visit text:* `' + visitParsed.text + '`');
-    }
-    if (visitInstant) {
-      lines.push('*Parsed visit time:* `' + visitInstant.toISOString() + '`');
-    }
-    if (visitInstant && slackSeenAt) {
-      const d = formatDurationMs(slackSeenAt.getTime() - visitInstant.getTime());
-      if (d) lines.push('*RB2B alert vs parsed visit:* ' + d + ' (Slack message time minus visit; cron adds more delay)');
-    }
-    if (slackSeenAt) {
-      lines.push('*Enrolled at (worker):* `' + enrolledAt.toISOString() + '`');
-      const pipe = formatDurationMs(enrolledAt.getTime() - slackSeenAt.getTime());
-      if (pipe) lines.push('*RB2B alert → enrolled (pipeline):* ' + pipe);
-    }
-    lines.push('_First send/open/reply timing is posted when SmartLead/HeyReach webhooks fire._');
+/**
+ * Handle one Slack message end to end.
+ * Returns null when it is not a parseable lead, otherwise an outcome describing what happened.
+ * `transient` means a fixable failure occurred and the message should be retried later.
+ */
+async function processMessage(msg, clientId, channelId, cfg) {
+  const lead = extractLead(msg);
+  if (!lead) return null;
 
+  const leadName = lead.firstName + ' ' + lead.lastName;
+
+  const icpResult = passesICP(lead, cfg);
+  if (!icpResult.pass) {
+    logger.info('Lead skipped (ICP filter)', { clientId, lead: leadName, reason: icpResult.reason });
+    return { kind: 'icp_skip' };
+  }
+
+  const slackTs = msg.ts || null;
+  const slackSeenAt = slackTsToDate(slackTs);
+  const visitParsed = parseRb2bVisitAt(lead.visitedAt);
+  const visitInstant = visitParsed.at;
+
+  let transient = false;
+
+  const rb2bEmailRaw = String(lead.email || '').trim();
+  let email = isUsableWorkEmail(rb2bEmailRaw) ? rb2bEmailRaw : null;
+  if (!email) {
+    try {
+      const companyDomain = lead.companyWebsite ? lead.companyWebsite.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : null;
+      const forProspeo = { ...lead, email: null };
+      email = await findWorkEmail({ ...forProspeo, companyDomain }, cfg);
+    } catch (err) {
+      logger.error('Prospeo email enrichment error', { clientId, error: err.message, lead: leadName });
+      transient = true;
+    }
+  }
+  if (!email) {
+    try {
+      const bc = await findWorkEmailBetterContact(lead, cfg);
+      if (bc && isUsableWorkEmail(bc)) email = bc;
+    } catch (err) {
+      logger.error('BetterContact error', { clientId, error: err.message, lead: leadName });
+      transient = true;
+    }
+  }
+
+  const emailKey = email ? normalizeEmailKey(email) : '';
+  const linkedinKey = normalizeLinkedinKey(lead.linkedinUrl);
+
+  const enrolledAt = new Date();
+  let smartResult = { ok: false };
+  let heyResult = { ok: false };
+
+  if (emailKey) {
+    smartResult = await addToSmartLead(lead, email, cfg);
+    if (smartResult.ok) {
+      await reportTouchpoint({
+        client_external_id: channelId,
+        lead_key: emailKey,
+        type: 'enrolled_smartlead',
+        slack_message_ts: slackTs,
+        visited_at_raw: visitParsed.text || lead.visitedAt || null,
+        visit_instant: visitInstant ? visitInstant.toISOString() : null,
+      });
+    } else if (['http_error', 'exception', 'missing_config'].includes(smartResult.reason)) {
+      // We have an email but could not enroll — almost always a fixable SmartLead config/transient issue.
+      transient = true;
+    }
+  }
+
+  if (linkedinKey) {
+    heyResult = await addToHeyReach(lead, cfg);
+    if (heyResult.ok) {
+      await reportTouchpoint({
+        client_external_id: channelId,
+        lead_key: linkedinKey,
+        type: 'enrolled_heyreach',
+        slack_message_ts: slackTs,
+        visited_at_raw: visitParsed.text || lead.visitedAt || null,
+        visit_instant: visitInstant ? visitInstant.toISOString() : null,
+      });
+    } else if (['http_error', 'exception'].includes(heyResult.reason)) {
+      transient = true;
+    }
+  }
+
+  const lines = [];
+  lines.push('*Enrollment complete*');
+  lines.push('*Client:* ' + cfg.name);
+  lines.push('*Lead:* ' + leadName + (lead.company ? ' · ' + lead.company : ''));
+  if (emailKey) {
+    lines.push(
+      '*SmartLead (email):* ' +
+        (smartResult.ok ? 'enrolled `' + emailKey + '`' : 'not enrolled (' + (smartResult.reason || 'failed') + ')')
+    );
+  } else {
+    lines.push('*SmartLead (email):* skipped (no email)');
+  }
+  if (linkedinKey) {
+    lines.push(
+      '*HeyReach (LinkedIn):* ' + (heyResult.ok ? 'enrolled' : 'not enrolled (' + (heyResult.reason || 'failed') + ')')
+    );
+  } else {
+    lines.push('*HeyReach (LinkedIn):* skipped (no LinkedIn URL)');
+  }
+  if (visitParsed.text) {
+    lines.push('*RB2B visit text:* `' + visitParsed.text + '`');
+  }
+  if (visitInstant) {
+    lines.push('*Parsed visit time:* `' + visitInstant.toISOString() + '`');
+  }
+  if (visitInstant && slackSeenAt) {
+    const d = formatDurationMs(slackSeenAt.getTime() - visitInstant.getTime());
+    if (d) lines.push('*RB2B alert vs parsed visit:* ' + d + ' (Slack message time minus visit; cron adds more delay)');
+  }
+  if (slackSeenAt) {
+    lines.push('*Enrolled at (worker):* `' + enrolledAt.toISOString() + '`');
+    const pipe = formatDurationMs(enrolledAt.getTime() - slackSeenAt.getTime());
+    if (pipe) lines.push('*RB2B alert → enrolled (pipeline):* ' + pipe);
+  }
+  lines.push('_First send/open/reply timing is posted when SmartLead/HeyReach webhooks fire._');
+
+  // Only notify Slack when there is something worth saying (a real enroll or a fixable failure we will retry).
+  const enrolledAny = smartResult.ok || heyResult.ok;
+  if (enrolledAny || transient) {
     await postSlackMessage(channelId, lines.join('\n'), cfg.slack_token);
   }
 
-  logger.info('Client run complete', { clientId, leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures });
-  return { ok: true, stats: { leadsFound, routedHeyReach, routedSmartLead, skipped, parseFailures } };
+  const label = enrolledAny
+    ? smartResult.ok && heyResult.ok
+      ? 'enrolled_both'
+      : smartResult.ok
+        ? 'enrolled_smartlead'
+        : 'enrolled_heyreach'
+    : 'no_contact';
+
+  return {
+    kind: 'lead',
+    routedSmartLead: smartResult.ok,
+    routedHeyReach: heyResult.ok,
+    transient,
+    leadKey: emailKey || linkedinKey || null,
+    label,
+  };
 }
 
 async function main() {
@@ -287,7 +371,7 @@ async function main() {
       heyreach_api_key: process.env.HEYREACH_API_KEY,
       heyreach_campaign_id: process.env.HEYREACH_CAMPAIGN_ID,
     });
-    await runForClient({ id: 'single' }, cfg);
+    await runForClient({ id: 'single' }, cfg, false);
     return;
   }
 
@@ -313,7 +397,7 @@ async function main() {
       logger.error('Failed to fetch client config', { clientId: c.id, error: err.message });
       continue;
     }
-    await runForClient(c, cfg);
+    await runForClient(c, cfg, true);
   }
 }
 
