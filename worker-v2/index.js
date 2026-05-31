@@ -273,7 +273,7 @@ async function processMessage(msg, clientId, channelId, cfg) {
         visited_at_raw: visitParsed.text || lead.visitedAt || null,
         visit_instant: visitInstant ? visitInstant.toISOString() : null,
       });
-    } else if (['http_error', 'exception', 'missing_config'].includes(smartResult.reason)) {
+    } else if (['http_error', 'exception', 'missing_config', 'rate_limited'].includes(smartResult.reason)) {
       // We have an email but could not enroll — almost always a fixable SmartLead config/transient issue.
       transient = true;
     }
