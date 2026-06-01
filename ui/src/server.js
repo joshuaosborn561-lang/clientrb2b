@@ -60,6 +60,7 @@ function workerConfigPayload(c) {
     smartlead_campaign_id: c.smartlead_campaign_id || null,
     heyreach_api_key: c.heyreach_api_key || null,
     heyreach_campaign_id: c.heyreach_campaign_id || null,
+    icp_filter_enabled: c.icp_filter_enabled === true,
     ui_touchpoint_ingest_url: base ? base + '/api/touchpoints/report' : null,
   };
 }
@@ -91,6 +92,10 @@ async function ensureSchema() {
   await pool.query(`alter table clients add column if not exists smartlead_api_key text;`);
   await pool.query(`alter table clients add column if not exists heyreach_api_key text;`);
   await pool.query(`alter table clients add column if not exists bettercontact_api_key text;`);
+  // ICP filtering is OFF by default. RB2B website visitors are usually small companies,
+  // and a one-size-fits-all ICP filter silently dropped every lead for clients it was not
+  // tuned for (this is why Nieto stopped enrolling). Opt in per client only.
+  await pool.query(`alter table clients add column if not exists icp_filter_enabled boolean not null default false;`);
   await pool.query(`alter table clients drop column if exists notion_api_key;`);
   await pool.query(`alter table clients drop column if exists notion_enrichment_db_id;`);
   await pool.query(`alter table clients drop column if exists notion_title_property;`);
@@ -125,10 +130,25 @@ async function ensureSchema() {
 
   await ensureTouchpointSchema(pool);
 
+  // Dedup: which RB2B Slack messages the worker has already fully handled per client.
+  // Lets the cron re-scan a wide window cheaply (only new messages do enrichment/enroll work),
+  // prevents duplicate SmartLead submits + duplicate Slack posts, and makes catch-up idempotent.
+  await pool.query(`
+    create table if not exists processed_messages (
+      client_id uuid not null references clients(id) on delete cascade,
+      slack_message_ts text not null,
+      lead_key text,
+      outcome text,
+      processed_at timestamptz not null default now(),
+      primary key (client_id, slack_message_ts)
+    );
+  `);
+  await pool.query(`create index if not exists processed_messages_client_idx on processed_messages(client_id);`);
+
   await pool.query(`
     insert into clients (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id, notes)
     select 'Nieto', 'paused', 'C0000000000', null, null,
-           'Paused until you set the real RB2B Slack channel ID and SmartLead/HeyReach campaign IDs + API keys (Edit). Shared Prospeo/BetterContact/Slack bot come from UI Railway env.'
+           'Set status=active + the real RB2B Slack channel ID and SmartLead/HeyReach campaign IDs + API keys (Edit). Shared Prospeo/BetterContact/Slack bot come from UI Railway env. ICP filter is off by default so every visitor is enrolled.'
     where not exists (select 1 from clients where lower(trim(name)) = 'nieto');
   `);
 }
@@ -136,6 +156,11 @@ async function ensureSchema() {
 function normalizeStatus(s) {
   if (s === 'paused') return 'paused';
   return 'active';
+}
+
+function isChecked(v) {
+  const t = String(v == null ? '' : v).trim().toLowerCase();
+  return t === 'on' || t === 'true' || t === '1' || t === 'yes';
 }
 
 function maskSecret(s) {
@@ -202,15 +227,16 @@ app.post('/clients', async (req, res) => {
     slack_token,
     smartlead_api_key,
     heyreach_api_key,
+    icp_filter_enabled,
     notes,
   } = req.body;
 
   await pool.query(
     `insert into clients
       (name, status, slack_channel_id, heyreach_campaign_id, smartlead_campaign_id,
-       slack_token, smartlead_api_key, heyreach_api_key,
+       slack_token, smartlead_api_key, heyreach_api_key, icp_filter_enabled,
        notes, webhook_secret)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9, encode(gen_random_bytes(24), 'hex'))`,
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, encode(gen_random_bytes(24), 'hex'))`,
     [
       (name || '').trim(),
       normalizeStatus(status),
@@ -220,6 +246,7 @@ app.post('/clients', async (req, res) => {
       (slack_token || '').trim() || null,
       (smartlead_api_key || '').trim() || null,
       (heyreach_api_key || '').trim() || null,
+      isChecked(icp_filter_enabled),
       (notes || '').trim() || null,
     ]
   );
@@ -259,6 +286,7 @@ app.post('/clients/:id', async (req, res) => {
     slack_token,
     smartlead_api_key,
     heyreach_api_key,
+    icp_filter_enabled,
     notes,
   } = req.body;
 
@@ -283,7 +311,8 @@ app.post('/clients/:id', async (req, res) => {
       slack_token = $7,
       smartlead_api_key = $8,
       heyreach_api_key = $9,
-      notes = $10
+      icp_filter_enabled = $10,
+      notes = $11
      where id = $1`,
     [
       req.params.id,
@@ -295,6 +324,7 @@ app.post('/clients/:id', async (req, res) => {
       nextSlackToken,
       nextSmartKey,
       nextHeyKey,
+      isChecked(icp_filter_enabled),
       (notes || '').trim() || null,
     ]
   );
@@ -326,6 +356,48 @@ app.get('/api/worker-config/:clientId', async (req, res) => {
   const { rows } = await pool.query('select * from clients where id = $1', [req.params.clientId]);
   if (rows.length === 0) return res.status(404).json({ ok: false, error: 'not_found' });
   res.json(workerConfigPayload(rows[0]));
+});
+
+// Dedup: which Slack messages a client has already fully handled.
+app.get('/api/worker/processed/:clientId', async (req, res) => {
+  if (!requireWorkerAuth(req, res)) return;
+  const oldest = String(req.query.oldest || '').trim();
+  const params = [req.params.clientId];
+  let sql = 'select slack_message_ts from processed_messages where client_id = $1';
+  if (oldest && /^\d+(\.\d+)?$/.test(oldest)) {
+    sql += ' and slack_message_ts >= $2';
+    params.push(oldest);
+  }
+  try {
+    const { rows } = await pool.query(sql, params);
+    res.json({ ok: true, ts: rows.map((r) => r.slack_message_ts) });
+  } catch (err) {
+    res.json({ ok: true, ts: [] });
+  }
+});
+
+app.post('/api/worker/processed/:clientId', async (req, res) => {
+  if (!requireWorkerAuth(req, res)) return;
+  const body = req.body || {};
+  const items = Array.isArray(body.items) ? body.items : body.ts ? [{ ts: body.ts, lead_key: body.lead_key, outcome: body.outcome }] : [];
+  const valid = items.filter((i) => i && String(i.ts || '').trim());
+  if (valid.length === 0) return res.json({ ok: true, saved: 0 });
+  try {
+    for (const i of valid) {
+      await pool.query(
+        `insert into processed_messages (client_id, slack_message_ts, lead_key, outcome)
+         values ($1,$2,$3,$4)
+         on conflict (client_id, slack_message_ts) do update set
+           lead_key = coalesce(excluded.lead_key, processed_messages.lead_key),
+           outcome = excluded.outcome,
+           processed_at = now()`,
+        [req.params.clientId, String(i.ts).trim(), (i.lead_key || '').toString().trim() || null, (i.outcome || '').toString().trim() || null]
+      );
+    }
+    res.json({ ok: true, saved: valid.length });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'save_failed' });
+  }
 });
 
 app.get('/health', (req, res) => res.json({ ok: true }));

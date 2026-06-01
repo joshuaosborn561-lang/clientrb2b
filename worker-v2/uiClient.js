@@ -45,5 +45,33 @@ async function fetchClientConfig(clientId) {
   return await fetchJson(url);
 }
 
-module.exports = { listActiveClients, fetchClientConfig };
+/** Returns a Set of Slack message ts strings this client has already fully handled. */
+async function fetchProcessedSet(clientId, oldest) {
+  try {
+    const q = oldest ? '?oldest=' + encodeURIComponent(oldest) : '';
+    const url = baseUrl() + '/api/worker/processed/' + encodeURIComponent(clientId) + q;
+    const data = await fetchJson(url);
+    return new Set(Array.isArray(data.ts) ? data.ts.map((t) => String(t)) : []);
+  } catch (err) {
+    logger.warn('Could not fetch processed set (continuing without dedup)', { clientId, error: err.message });
+    return new Set();
+  }
+}
+
+/** Marks one Slack message as fully handled so future runs skip it. Best-effort. */
+async function markProcessed(clientId, ts, leadKey, outcome) {
+  if (!ts) return;
+  try {
+    const url = baseUrl() + '/api/worker/processed/' + encodeURIComponent(clientId);
+    await fetch(url, {
+      method: 'POST',
+      headers: { ...authHeader(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ts: String(ts), lead_key: leadKey || null, outcome: outcome || null }),
+    });
+  } catch (err) {
+    logger.warn('Could not mark message processed', { clientId, ts, error: err.message });
+  }
+}
+
+module.exports = { listActiveClients, fetchClientConfig, fetchProcessedSet, markProcessed };
 

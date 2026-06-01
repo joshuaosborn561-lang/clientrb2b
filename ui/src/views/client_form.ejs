@@ -51,6 +51,14 @@
     </div>
 
     <div class="field span-2">
+      <label>
+        <input type="checkbox" name="icp_filter_enabled" value="on" <%= client && client.icp_filter_enabled ? 'checked' : '' %> />
+        Apply ICP filter (skip small companies + excluded industries)
+      </label>
+      <div class="muted" style="margin-top:4px;">Off by default. Leave unchecked to enroll <strong>every</strong> RB2B visitor. Only enable if this client wants to skip small/excluded-industry visitors.</div>
+    </div>
+
+    <div class="field span-2">
       <label>Notes (optional)</label>
       <textarea name="notes" rows="3" placeholder="Anything about this client..."><%= client && client.notes ? client.notes : '' %></textarea>
     </div>

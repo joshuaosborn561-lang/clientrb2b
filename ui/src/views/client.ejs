@@ -19,6 +19,7 @@
     <div><div class="muted">HeyReach campaign ID</div><div><code><%= client.heyreach_campaign_id || '—' %></code></div></div>
     <div><div class="muted">SmartLead API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.smartlead_api_key) : '' %></div></div>
     <div><div class="muted">HeyReach API key</div><div><%= typeof maskSecret !== 'undefined' ? maskSecret(client.heyreach_api_key) : '' %></div></div>
+    <div><div class="muted">ICP filter</div><div><span class="pill <%= client.icp_filter_enabled ? 'off' : 'ok' %>"><%= client.icp_filter_enabled ? 'on (skips small/excluded)' : 'off (enroll everyone)' %></span></div></div>
     <div class="span-2"><div class="muted">Webhook secret</div><div><code><%= client.webhook_secret || '' %></code></div></div>
   </div>
 </div>

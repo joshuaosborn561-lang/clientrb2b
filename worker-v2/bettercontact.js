@@ -59,7 +59,7 @@ async function findWorkEmailBetterContact(lead, cfg = null) {
       return null;
     }
 
-    const maxMs = Number(process.env.BETTERCONTACT_POLL_MS || 5 * 60 * 1000);
+    const maxMs = Number(process.env.BETTERCONTACT_POLL_MS || 90 * 1000);
     const stepMs = Number(process.env.BETTERCONTACT_POLL_STEP_MS || 2000);
     const deadline = Date.now() + maxMs;
     let lastStatus = '';

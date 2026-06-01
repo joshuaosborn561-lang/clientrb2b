@@ -1,5 +1,17 @@
 const logger = require('./logger');
 
+// Light process-wide spacing so a backlog of enrichments doesn't trip Prospeo's rate limit.
+const MIN_INTERVAL_MS = Number(process.env.PROSPEO_MIN_INTERVAL_MS || 700);
+let lastCallAt = 0;
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+async function throttle() {
+  const wait = lastCallAt + MIN_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt = Date.now();
+}
+
 /**
  * Find work email when RB2B alert has none.
  * Uses Prospeo Enrich Person: https://prospeo.io/api-docs/enrich-person
@@ -30,6 +42,7 @@ async function findWorkEmail(lead, cfg = null) {
   }
 
   try {
+    await throttle();
     const res = await fetch('https://api.prospeo.io/enrich-person', {
       method: 'POST',
       headers: {
