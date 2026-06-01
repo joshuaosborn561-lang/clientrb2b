@@ -1,4 +1,9 @@
-[cron]
-schedule = "*/15 * * * *"
-command = "node index.js"
+[build]
+builder = "RAILPACK"
 
+# Railway runs this as a cron job: it polls each active client's RB2B Slack
+# channel, enriches + enrolls new visitors, then exits. Every 15 minutes.
+[deploy]
+startCommand = "node index.js"
+cronSchedule = "*/15 * * * *"
+restartPolicyType = "NEVER"
